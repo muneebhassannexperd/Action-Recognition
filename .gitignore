@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Inference outputs (regenerated locally)
+outputs/*
+!outputs/.gitkeep
+
+# Model weights (download via scripts/download_models.sh)
+pretrained_model/**/*
+!pretrained_model/README.md
+!pretrained_model/.gitkeep
+
+yolo_models/*
+!yolo_models/README.md
+!yolo_models/.gitkeep
+
+# Test videos (large; keep locally)
+Test-Videos/
+
+# Logs / temp
+*.log
+*.tmp
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
