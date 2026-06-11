@@ -53,7 +53,7 @@ POSEC3D_HEATMAP_SIZE = 64
 POSEC3D_HEATMAP_MODE = "keypoint"
 
 ACTION_MODELS = ("ctrgcn", "posec3d")
-DEFAULT_ACTION_MODEL = "ctrgcn"
+DEFAULT_ACTION_MODEL = "posec3d"
 
 # Rolling skeleton windows (frames) before resampling to CLIP_LEN / POSEC3D_CLIP_LEN
 WINDOW_SIZES = (30, 48, 60, 90, 100, 120)
@@ -62,7 +62,7 @@ DEFAULT_WINDOW_SIZE = 30
 # Run CTR-GCN every N frames once pair buffer is full
 INFERENCE_STRIDE = 15
 #TOP_K = 5
-TOP_K = 20
+TOP_K = 10
 
 # Two-person interaction gating (pixel distance between bbox centers)
 INTERACTION_DISTANCE = 250.0
