@@ -76,6 +76,10 @@ TRACKER_CONFIG = "bytetrack.yaml"
 EVENT_MIN_CONFIDENCE = 0.15
 VIOLENCE_MIN_CONFIDENCE = EVENT_MIN_CONFIDENCE  # backward-compatible alias
 
+# Single-track fall -> person_falls_after_contact if same track had a pair
+# interaction event (push_shove, swing_attempt, grapple_clinch) within this window.
+FALL_CONTACT_WINDOW_SECONDS = 2.0
+
 YOLO_KEYPOINT_CONF_THRESHOLD = 0.3
 POSE_CONF_THRESHOLD = 0.25
 

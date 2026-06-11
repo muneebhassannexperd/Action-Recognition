@@ -101,7 +101,7 @@ def annotate_frame(
         else:
             color = (140, 140, 140)
             thickness = 2
-            label = f"ID{tid} | waiting for pair..."
+            label = f"ID{tid} | buffering..."
 
         cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
         _draw_label_box(out, label, x1, max(0, y1 - 6), color)

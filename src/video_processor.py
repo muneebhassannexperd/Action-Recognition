@@ -1,4 +1,4 @@
-"""End-to-end pipeline: YOLO track -> interaction pairs -> action recognition -> JSON + video."""
+"""End-to-end pipeline: YOLO track -> single + pair action recognition -> JSON + video."""
 
 from __future__ import annotations
 
@@ -14,14 +14,20 @@ _ROOT = os.path.dirname(_SRC)
 sys.path.insert(0, _SRC)
 sys.path.insert(0, _ROOT)
 from utils.class_mapping import (
+    INTERACTION_CORRELATION_CLASSES,
+    InteractionRecord,
+    best_fall_stumble_from_topk,
     best_mapped_from_topk,
     enrich_top_k,
+    filter_single_target_events,
     filter_target_events,
+    resolve_single_fall_event,
 )
 from utils.config import (
     DEFAULT_ACTION_MODEL,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
+    FALL_CONTACT_WINDOW_SECONDS,
     INFERENCE_STRIDE,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
@@ -38,10 +44,11 @@ from video_annotator import TrackActionLabel, annotate_frame, create_video_write
 
 class VideoProcessor:
     """
-    Two-person interaction recognition with a selectable action backend.
+    Single- and two-person action recognition with a selectable action backend.
 
-    Runs inference only when two tracks stay within ``interaction_distance``
-    for ``interaction_frames`` consecutive frames and both skeleton buffers are full.
+    Pair inference runs when two tracks stay within ``interaction_distance`` for
+    ``interaction_frames`` consecutive frames. Single inference runs on every
+    track with a full buffer, regardless of pair status.
     """
 
     def __init__(
@@ -57,6 +64,7 @@ class VideoProcessor:
         event_min_confidence: float = EVENT_MIN_CONFIDENCE,
         interaction_distance: float = INTERACTION_DISTANCE,
         interaction_frames: int = INTERACTION_FRAMES,
+        fall_contact_window: float = FALL_CONTACT_WINDOW_SECONDS,
         tracker: str = TRACKER_CONFIG,
     ) -> None:
         yolo_path = str(resolve_yolo_model(pose_model_path))
@@ -80,9 +88,44 @@ class VideoProcessor:
         )
         self.inference_stride = inference_stride
         self.event_min_confidence = event_min_confidence
-        self._last_infer_frame: dict[tuple[int, int], int] = {}
-        self._track_labels: dict[int, TrackActionLabel] = {}
+        self.fall_contact_window = fall_contact_window
+        self._last_pair_infer_frame: dict[tuple[int, int], int] = {}
+        self._last_single_infer_frame: dict[int, int] = {}
+        self._pair_track_labels: dict[int, TrackActionLabel] = {}
+        self._single_track_labels: dict[int, TrackActionLabel] = {}
+        self._interaction_history: list[InteractionRecord] = []
         self._frame_shape: tuple[int, int] | None = None
+
+    def _pair_takes_priority(self, track_id: int) -> bool:
+        """Pair prediction overrides single when pair has a non-Normal label."""
+        label = self._pair_track_labels.get(track_id)
+        return label is not None and not label.is_normal
+
+    def _display_labels(self) -> dict[int, TrackActionLabel]:
+        """Pair non-Normal labels take priority over single-person labels."""
+        labels = dict(self._single_track_labels)
+        for tid, pair_label in self._pair_track_labels.items():
+            if not pair_label.is_normal or tid not in labels:
+                labels[tid] = pair_label
+        return labels
+
+    def _record_interaction(self, mapped: dict[str, Any], timestamp: float, frame_idx: int,
+                            track_a: int, track_b: int) -> None:
+        if mapped["target_class"] not in INTERACTION_CORRELATION_CLASSES:
+            return
+        self._interaction_history.append(InteractionRecord(
+            timestamp=timestamp,
+            frame=frame_idx,
+            track_a=track_a,
+            track_b=track_b,
+            target_class=mapped["target_class"],
+        ))
+
+    def _prune_interaction_history(self, timestamp: float) -> None:
+        cutoff = timestamp - self.fall_contact_window
+        self._interaction_history = [
+            r for r in self._interaction_history if r.timestamp >= cutoff
+        ]
 
     def process(
         self,
@@ -112,8 +155,15 @@ class VideoProcessor:
         events: list[dict[str, Any]] = []
         raw_predictions: list[dict[str, Any]] = []
         seen_event_keys: set[tuple] = set()
-        self._last_infer_frame.clear()
-        self._track_labels.clear()
+        self._last_pair_infer_frame.clear()
+        self._last_single_infer_frame.clear()
+        self._pair_track_labels.clear()
+        self._single_track_labels.clear()
+        self._interaction_history.clear()
+
+        predict_kwargs: dict[str, Any] = {}
+        if self._frame_shape is not None:
+            predict_kwargs["img_shape"] = self._frame_shape
 
         frame_idx = -1
         while True:
@@ -122,6 +172,7 @@ class VideoProcessor:
                 break
             frame_idx += 1
             timestamp = frame_idx / fps
+            self._prune_interaction_history(timestamp)
 
             tracks = self.pose_detector.track(frame)
             self.interaction_detector.update(tracks, frame_idx)
@@ -131,11 +182,13 @@ class VideoProcessor:
             for tid in list(self.buffer.track_ids()):
                 if tid not in active_ids:
                     self.buffer.remove(tid)
-                    self._track_labels.pop(tid, None)
+                    self._pair_track_labels.pop(tid, None)
+                    self._single_track_labels.pop(tid, None)
+                    self._last_single_infer_frame.pop(tid, None)
 
-            for key in list(self._last_infer_frame):
+            for key in list(self._last_pair_infer_frame):
                 if key[0] not in active_ids or key[1] not in active_ids:
-                    self._last_infer_frame.pop(key, None)
+                    self._last_pair_infer_frame.pop(key, None)
 
             for track in tracks:
                 tid = track["track_id"]
@@ -143,12 +196,13 @@ class VideoProcessor:
                 if kpts:
                     self.buffer.add(tid, kpts)
 
+            # --- Pair inference (unchanged behaviour) ---
             for track_a, track_b in active_pairs:
                 pair_key = (track_a, track_b)
                 if not self.buffer.is_pair_ready(track_a, track_b):
                     continue
 
-                last = self._last_infer_frame.get(pair_key, -self.inference_stride)
+                last = self._last_pair_infer_frame.get(pair_key, -self.inference_stride)
                 if frame_idx - last < self.inference_stride:
                     continue
 
@@ -156,13 +210,14 @@ class VideoProcessor:
                 if pair_seq is None:
                     continue
 
-                predict_kwargs: dict[str, Any] = {}
-                if self._frame_shape is not None:
-                    predict_kwargs["img_shape"] = self._frame_shape
-
-                top_k = self.recognizer.predict(pair_seq, **predict_kwargs)
+                top_k = self.recognizer.predict(
+                    pair_seq,
+                    inference_mode="pair",
+                    num_persons=2,
+                    **predict_kwargs,
+                )
                 enriched_top_k = enrich_top_k(top_k)
-                self._last_infer_frame[pair_key] = frame_idx
+                self._last_pair_infer_frame[pair_key] = frame_idx
 
                 mapped_best = best_mapped_from_topk(top_k)
                 if mapped_best is not None:
@@ -174,10 +229,10 @@ class VideoProcessor:
                         confidence=mapped_best["confidence"],
                         updated_frame=frame_idx,
                     )
-                    self._track_labels[track_a] = label
-                    self._track_labels[track_b] = label
+                    self._pair_track_labels[track_a] = label
+                    self._pair_track_labels[track_b] = label
 
-                segment = {
+                raw_predictions.append({
                     "mode": "pair",
                     "timestamp": round(float(timestamp), 2),
                     "frame": frame_idx,
@@ -187,15 +242,19 @@ class VideoProcessor:
                     "window_frames": pair_seq.shape[1],
                     "mapped_best": mapped_best,
                     "top_predictions": enriched_top_k,
-                }
-                raw_predictions.append(segment)
+                })
 
-                self._print_pair_predictions(
-                    timestamp, track_a, track_b, enriched_top_k, mapped_best,
+                self._print_predictions(
+                    "pair", timestamp, enriched_top_k, mapped_best,
+                    track_a=track_a, track_b=track_b,
                 )
 
                 for mapped in filter_target_events(top_k, min_confidence=self.event_min_confidence):
+                    self._record_interaction(
+                        mapped, timestamp, frame_idx, track_a, track_b,
+                    )
                     event_key = (
+                        "pair",
                         mapped["target_class"],
                         track_a,
                         track_b,
@@ -205,6 +264,7 @@ class VideoProcessor:
                         continue
                     seen_event_keys.add(event_key)
                     events.append({
+                        "mode": "pair",
                         "timestamp": round(float(timestamp), 2),
                         "frame": frame_idx,
                         "track_a": track_a,
@@ -216,11 +276,102 @@ class VideoProcessor:
                         "confidence": mapped["confidence"],
                     })
 
+            # --- Single-person inference (all tracks with full buffer) ---
+            for tid in sorted(active_ids):
+                if not self.buffer.is_ready(tid):
+                    continue
+
+                last = self._last_single_infer_frame.get(tid, -self.inference_stride)
+                if frame_idx - last < self.inference_stride:
+                    continue
+
+                single_seq = self.buffer.get_single_sequence(tid)
+                if single_seq is None:
+                    continue
+
+                top_k = self.recognizer.predict(
+                    single_seq,
+                    inference_mode="single",
+                    num_persons=1,
+                    **predict_kwargs,
+                )
+                enriched_top_k = enrich_top_k(top_k)
+                self._last_single_infer_frame[tid] = frame_idx
+
+                fall_pred = best_fall_stumble_from_topk(
+                    top_k, min_confidence=self.event_min_confidence,
+                )
+                mapped_best = None
+                if fall_pred is not None:
+                    mapped_best = resolve_single_fall_event(
+                        fall_pred,
+                        tid,
+                        timestamp,
+                        self._interaction_history,
+                        self.fall_contact_window,
+                    )
+
+                if mapped_best is not None and not self._pair_takes_priority(tid):
+                    self._single_track_labels[tid] = TrackActionLabel(
+                        target_class=mapped_best["target_class"],
+                        target_class_id=mapped_best["target_class_id"],
+                        ntu_class_id=mapped_best["ntu_class_id"],
+                        ntu_label=mapped_best["ntu_label"],
+                        confidence=mapped_best["confidence"],
+                        updated_frame=frame_idx,
+                    )
+
+                raw_predictions.append({
+                    "mode": "single",
+                    "timestamp": round(float(timestamp), 2),
+                    "frame": frame_idx,
+                    "track_id": tid,
+                    "num_persons": 1,
+                    "window_frames": single_seq.shape[1],
+                    "mapped_best": mapped_best,
+                    "top_predictions": enriched_top_k,
+                })
+
+                self._print_predictions(
+                    "single", timestamp, enriched_top_k, mapped_best, track_id=tid,
+                )
+
+                for mapped in filter_single_target_events(
+                    top_k,
+                    track_id=tid,
+                    timestamp=timestamp,
+                    interaction_history=self._interaction_history,
+                    contact_window_seconds=self.fall_contact_window,
+                    min_confidence=self.event_min_confidence,
+                ):
+                    if self._pair_takes_priority(tid):
+                        continue
+                    event_key = (
+                        "single",
+                        mapped["target_class"],
+                        tid,
+                        round(timestamp, 1),
+                    )
+                    if event_key in seen_event_keys:
+                        continue
+                    seen_event_keys.add(event_key)
+                    events.append({
+                        "mode": "single",
+                        "timestamp": round(float(timestamp), 2),
+                        "frame": frame_idx,
+                        "track_id": tid,
+                        "target_class": mapped["target_class"],
+                        "target_class_id": mapped["target_class_id"],
+                        "ntu_class_id": mapped["ntu_class_id"],
+                        "ntu_label": mapped["ntu_label"],
+                        "confidence": mapped["confidence"],
+                    })
+
             if writer is not None:
                 annotated = annotate_frame(
                     frame,
                     tracks,
-                    self._track_labels,
+                    self._display_labels(),
                     frame_idx,
                     active_pairs=active_pairs,
                 )
@@ -230,18 +381,25 @@ class VideoProcessor:
         if writer is not None:
             writer.release()
 
+        pair_preds = sum(1 for p in raw_predictions if p["mode"] == "pair")
+        single_preds = sum(1 for p in raw_predictions if p["mode"] == "single")
+
         report: dict[str, Any] = {
             "video": os.path.basename(video_path),
             "fps": round(float(fps), 2),
             "window_size": self.buffer.window_size,
             "interaction_distance": self.interaction_detector.distance_threshold,
             "interaction_frames": self.interaction_detector.min_consecutive_frames,
+            "fall_contact_window": self.fall_contact_window,
             "tracker": self.pose_detector.tracker,
             "events": events,
             "raw_predictions": raw_predictions,
         }
         if annotated_output_path:
             report["annotated_video"] = os.path.basename(annotated_output_path)
+
+        report["pair_inference_segments"] = pair_preds
+        report["single_inference_segments"] = single_preds
 
         if output_json_path:
             os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
@@ -251,17 +409,22 @@ class VideoProcessor:
         return report
 
     @staticmethod
-    def _print_pair_predictions(
+    def _print_predictions(
+        mode: str,
         timestamp: float,
-        track_a: int,
-        track_b: int,
         enriched_top_k: list[dict[str, Any]],
         mapped_best: dict[str, Any] | None,
+        *,
+        track_a: int | None = None,
+        track_b: int | None = None,
+        track_id: int | None = None,
     ) -> None:
-        print(
-            f"\n[t={timestamp:.2f}s pair={track_a}-{track_b}] "
-            f"Top {len(enriched_top_k)} predictions (M=2):"
-        )
+        if mode == "pair":
+            header = f"[t={timestamp:.2f}s pair={track_a}-{track_b}]"
+        else:
+            header = f"[t={timestamp:.2f}s track={track_id}]"
+        m_tag = "M=1" if mode == "single" else "M=2"
+        print(f"\n{header} Top {len(enriched_top_k)} predictions ({mode}, {m_tag})")
         for rank, pred in enumerate(enriched_top_k, start=1):
             print(
                 f"  {rank}. #{pred['ntu_class_id']:3d} {pred['ntu_label']:<40} "

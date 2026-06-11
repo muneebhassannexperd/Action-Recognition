@@ -61,8 +61,17 @@ class CTRGCNRecognizer(ActionRecognizer):
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        x = preprocess_sequence(seq, clip_len=CLIP_LEN).to(self.device)
-        print(f"Action Model: {self.get_model_name()}")
+        num_persons = kwargs.get("num_persons")
+        if num_persons is None and seq.ndim == 4:
+            num_persons = seq.shape[0]
+
+        x = preprocess_sequence(
+            seq,
+            clip_len=CLIP_LEN,
+            num_persons=num_persons,
+        ).to(self.device)
+        mode = kwargs.get("inference_mode", "pair" if x.shape[-1] > 1 else "single")
+        print(f"Action Model: {self.get_model_name()} ({mode}, M={x.shape[-1]})")
         print(f"Input tensor shape: {tuple(x.shape)}")
 
         t0 = time.perf_counter()

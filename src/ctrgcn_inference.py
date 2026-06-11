@@ -99,13 +99,17 @@ def format_gcn_input(skeleton: np.ndarray, num_person: int = NUM_PERSONS) -> np.
     return skeleton
 
 
-def preprocess_sequence(seq: np.ndarray, clip_len: int = CLIP_LEN) -> torch.Tensor:
+def preprocess_sequence(
+    seq: np.ndarray,
+    clip_len: int = CLIP_LEN,
+    num_persons: int | None = None,
+) -> torch.Tensor:
     """
     Convert skeleton sequence to model tensor (1, C, T, V, M).
 
     Accepts:
-        (T, V, 3)  — single person (padded to M=2)
-        (M, T, V, 3) — up to two persons for interaction recognition
+        (T, V, 3)  — single person
+        (M, T, V, 3) — one or two persons (M=1 single-track, M=2 pair)
     """
     if seq.ndim == 3:
         if seq.shape[1] != NUM_JOINTS:
@@ -122,9 +126,12 @@ def preprocess_sequence(seq: np.ndarray, clip_len: int = CLIP_LEN) -> torch.Tens
     else:
         raise ValueError(f"Expected 3D or 4D skeleton array, got shape {seq.shape}")
 
+    persons = num_persons if num_persons is not None else skeleton.shape[0]
+    persons = min(max(persons, 1), NUM_PERSONS)
+
     skeleton = pre_normalize_2d(skeleton.astype(np.float32))
     skeleton = uniform_sample(skeleton, clip_len)
-    skeleton = format_gcn_input(skeleton, NUM_PERSONS)
+    skeleton = format_gcn_input(skeleton, persons)
 
     tensor = torch.from_numpy(skeleton).float().unsqueeze(0)
     tensor = tensor.permute(0, 4, 2, 3, 1)

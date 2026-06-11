@@ -64,7 +64,9 @@ class PoseC3DRecognizer(ActionRecognizer):
             heatmap_mode=self.heatmap_mode,
         ).to(self.device)
 
-        print(f"Action Model: {self.get_model_name()}")
+        mode = kwargs.get("inference_mode", "single" if seq.ndim == 4 and seq.shape[0] == 1 else "pair")
+        m = seq.shape[0] if seq.ndim == 4 else 1
+        print(f"Action Model: {self.get_model_name()} ({mode}, M={m})")
         print(f"Input tensor shape: {tuple(x.shape)}")
         print(f"Heatmap mode: {self.heatmap_mode}")
 

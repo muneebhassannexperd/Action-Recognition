@@ -60,6 +60,18 @@ class SkeletonBufferBase(ABC):
             return None
         return np.stack(list(buf), axis=0)
 
+    def get_single_sequence(self, track_id: int) -> np.ndarray | None:
+        """
+        Return one-person tensor (M=1, T, V, C) for single-track inference.
+
+        Uses the trailing ``window_size`` frames when the buffer is full.
+        """
+        seq = self.get_sequence(track_id)
+        if seq is None or len(seq) < self.window_size:
+            return None
+        seq = seq[-self.window_size :]
+        return seq[np.newaxis, ...]
+
     def is_pair_ready(self, track_a: int, track_b: int, min_frames: int | None = None) -> bool:
         return self.is_ready(track_a, min_frames) and self.is_ready(track_b, min_frames)
 
