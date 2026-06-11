@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+#Adding One person Tracker
+
 # NTU120 class_id -> target label
 CLASS_MAPPING: dict[int, str] = {
     52: "push_shove",
@@ -22,7 +24,7 @@ CLASS_MAPPING: dict[int, str] = {
     93: "aggressive_posture",
     107: "aggressive_posture",
 }
-
+    
 DEFAULT_TARGET_CLASS = "Normal"
 
 TARGET_CLASS_IDS: dict[str, int] = {
