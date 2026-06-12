@@ -81,14 +81,11 @@ PAIR_OVERLAP_SCORE_IOU_REF = 0.3
 # Ultralytics tracker config: "bytetrack.yaml" or "botsort.yaml"
 TRACKER_CONFIG = "bytetrack.yaml"
 
-# Min confidence for non-Normal target events (see utils/class_mapping.py)
-
-EVENT_MIN_CONFIDENCE = 0.25
+# Min confidence for non-Normal cues in JSON events and annotated video overlays.
+EVENT_MIN_CONFIDENCE = 0.12
 VIOLENCE_MIN_CONFIDENCE = EVENT_MIN_CONFIDENCE  # backward-compatible alias
-
-# Single-track fall -> person_falls_after_contact if same track had a pair
-# interaction event (push_shove, swing_attempt, grapple_clinch) within this window.
-FALL_CONTACT_WINDOW_SECONDS = 2.0
+# Overlay floor (defaults to EVENT_MIN_CONFIDENCE; override in VideoProcessor if needed).
+OVERLAY_MIN_CONFIDENCE = EVENT_MIN_CONFIDENCE
 
 YOLO_KEYPOINT_CONF_THRESHOLD = 0.3
 POSE_CONF_THRESHOLD = 0.25

@@ -17,7 +17,6 @@ from utils.config import (
     DEFAULT_ACTION_MODEL,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
-    FALL_CONTACT_WINDOW_SECONDS,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
     OUTPUTS_DIR,
@@ -69,12 +68,6 @@ def parse_args() -> argparse.Namespace:
         help="Run action model every N frames once skeleton buffer is full.",
     )
     parser.add_argument(
-        "--fall-contact-window",
-        type=float,
-        default=FALL_CONTACT_WINDOW_SECONDS,
-        help="Seconds to look back for pair interaction when mapping single-path falls.",
-    )
-    parser.add_argument(
         "--interaction-distance",
         type=float,
         default=INTERACTION_DISTANCE,
@@ -96,7 +89,13 @@ def parse_args() -> argparse.Namespace:
         "--event-min-confidence",
         type=float,
         default=None,
-        help="Min confidence for non-Normal target class in events (default from config).",
+        help="Min confidence for JSON events (default from config).",
+    )
+    parser.add_argument(
+        "--overlay-min-confidence",
+        type=float,
+        default=None,
+        help="Min confidence for annotated video overlays (default: same as --event-min-confidence).",
     )
     parser.add_argument(
         "--violence-min-confidence",
@@ -152,6 +151,11 @@ def main() -> None:
         if args.violence_min_confidence is not None
         else EVENT_MIN_CONFIDENCE
     )
+    overlay_min_conf = (
+        args.overlay_min_confidence
+        if args.overlay_min_confidence is not None
+        else event_min_conf
+    )
 
     processor = VideoProcessor(
         pose_model_path=args.pose_model,
@@ -163,9 +167,9 @@ def main() -> None:
         window_size=args.window_size,
         inference_stride=args.inference_stride,
         event_min_confidence=event_min_conf,
+        overlay_min_confidence=overlay_min_conf,
         interaction_distance=args.interaction_distance,
         interaction_frames=args.interaction_frames,
-        fall_contact_window=args.fall_contact_window,
         tracker=args.tracker,
     )
 
