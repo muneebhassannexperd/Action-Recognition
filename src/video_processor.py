@@ -31,12 +31,26 @@ from utils.config import (
     INFERENCE_STRIDE,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
+    PAIR_CLOSE_CENTER_DISTANCE,
+    PAIR_IOU_MIN,
+    PAIR_MIN_DURATION_FRAMES,
+    PAIR_MIN_MEAN_KEYPOINT_CONF,
+    PAIR_OVERLAP_SCORE_IOU_REF,
+    PAIR_SCORE_THRESHOLD,
+    PAIR_WRIST_IOU_BYPASS,
+    PAIR_WRIST_MAX_DISTANCE,
     TRACKER_CONFIG,
     resolve_yolo_model,
 )
 
 from action_recognizer import ActionRecognizer, create_action_recognizer
 from interaction_detector import InteractionDetector
+from pair_validator import (
+    PairValidationConfig,
+    PairValidationDiagnostics,
+    PairValidationResult,
+    validate_pair,
+)
 from pose_detector import PoseDetector
 from skeleton_buffer import create_skeleton_buffer
 from video_annotator import TrackActionLabel, annotate_frame, create_video_writer
@@ -66,6 +80,7 @@ class VideoProcessor:
         interaction_frames: int = INTERACTION_FRAMES,
         fall_contact_window: float = FALL_CONTACT_WINDOW_SECONDS,
         tracker: str = TRACKER_CONFIG,
+        pair_validation: PairValidationConfig | None = None,
     ) -> None:
         yolo_path = str(resolve_yolo_model(pose_model_path))
         self.action_model = action_model.lower().strip()
@@ -89,6 +104,17 @@ class VideoProcessor:
         self.inference_stride = inference_stride
         self.event_min_confidence = event_min_confidence
         self.fall_contact_window = fall_contact_window
+        self.pair_validation = pair_validation or PairValidationConfig(
+            min_duration_frames=PAIR_MIN_DURATION_FRAMES,
+            min_iou=PAIR_IOU_MIN,
+            close_center_distance_px=PAIR_CLOSE_CENTER_DISTANCE,
+            min_mean_keypoint_conf=PAIR_MIN_MEAN_KEYPOINT_CONF,
+            wrist_max_distance_px=PAIR_WRIST_MAX_DISTANCE,
+            wrist_iou_bypass=PAIR_WRIST_IOU_BYPASS,
+            pair_score_threshold=PAIR_SCORE_THRESHOLD,
+            interaction_distance_px=interaction_distance,
+            overlap_score_iou_ref=PAIR_OVERLAP_SCORE_IOU_REF,
+        )
         self._last_pair_infer_frame: dict[tuple[int, int], int] = {}
         self._last_single_infer_frame: dict[int, int] = {}
         self._pair_track_labels: dict[int, TrackActionLabel] = {}
@@ -127,6 +153,26 @@ class VideoProcessor:
             r for r in self._interaction_history if r.timestamp >= cutoff
         ]
 
+    def _validate_pair(
+        self,
+        track_a: int,
+        track_b: int,
+        tracks: list[dict[str, Any]],
+    ) -> PairValidationResult:
+        """Geometric / pose-quality gate before pair action inference."""
+        by_id = {t["track_id"]: t for t in tracks}
+        ta = by_id.get(track_a)
+        tb = by_id.get(track_b)
+        if ta is None or tb is None:
+            return PairValidationResult(
+                accepted=False,
+                reasons=["missing track"],
+            )
+
+        pair_info = self.interaction_detector.get_pair_candidate(track_a, track_b)
+        consecutive = pair_info.consecutive_frames if pair_info is not None else 0
+        return validate_pair(ta, tb, consecutive, self.pair_validation)
+
     def process(
         self,
         video_path: str,
@@ -155,6 +201,7 @@ class VideoProcessor:
         events: list[dict[str, Any]] = []
         raw_predictions: list[dict[str, Any]] = []
         seen_event_keys: set[tuple] = set()
+        pair_validation_diag = PairValidationDiagnostics()
         self._last_pair_infer_frame.clear()
         self._last_single_infer_frame.clear()
         self._pair_track_labels.clear()
@@ -196,7 +243,7 @@ class VideoProcessor:
                 if kpts:
                     self.buffer.add(tid, kpts)
 
-            # --- Pair inference (unchanged behaviour) ---
+            # --- Pair inference ---
             for track_a, track_b in active_pairs:
                 pair_key = (track_a, track_b)
                 if not self.buffer.is_pair_ready(track_a, track_b):
@@ -204,6 +251,22 @@ class VideoProcessor:
 
                 last = self._last_pair_infer_frame.get(pair_key, -self.inference_stride)
                 if frame_idx - last < self.inference_stride:
+                    continue
+
+                validation = self._validate_pair(track_a, track_b, tracks)
+                pair_validation_diag.record(
+                    frame=frame_idx,
+                    timestamp=timestamp,
+                    track_a=track_a,
+                    track_b=track_b,
+                    result=validation,
+                )
+                if not validation.accepted:
+                    reason_str = ", ".join(validation.reasons)
+                    print(
+                        f"[pair reject] t={timestamp:.2f}s pair={track_a}-{track_b}: "
+                        f"{reason_str} | score={validation.pair_score:.3f}"
+                    )
                     continue
 
                 pair_seq = self.buffer.get_pair_sequence(track_a, track_b)
@@ -391,6 +454,18 @@ class VideoProcessor:
             "interaction_distance": self.interaction_detector.distance_threshold,
             "interaction_frames": self.interaction_detector.min_consecutive_frames,
             "fall_contact_window": self.fall_contact_window,
+            "pair_validation": {
+                "config": {
+                    "min_duration_frames": self.pair_validation.min_duration_frames,
+                    "min_iou": self.pair_validation.min_iou,
+                    "close_center_distance_px": self.pair_validation.close_center_distance_px,
+                    "min_mean_keypoint_conf": self.pair_validation.min_mean_keypoint_conf,
+                    "wrist_max_distance_px": self.pair_validation.wrist_max_distance_px,
+                    "wrist_iou_bypass": self.pair_validation.wrist_iou_bypass,
+                    "pair_score_threshold": self.pair_validation.pair_score_threshold,
+                },
+                **pair_validation_diag.to_report(),
+            },
             "tracker": self.pose_detector.tracker,
             "events": events,
             "raw_predictions": raw_predictions,
@@ -400,6 +475,8 @@ class VideoProcessor:
 
         report["pair_inference_segments"] = pair_preds
         report["single_inference_segments"] = single_preds
+
+        pair_validation_diag.print_summary()
 
         if output_json_path:
             os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)

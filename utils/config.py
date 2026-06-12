@@ -68,6 +68,16 @@ TOP_K = 10
 INTERACTION_DISTANCE = 250.0
 INTERACTION_FRAMES = 30
 
+# Pair validation before M=2 action inference (see src/pair_validator.py)
+PAIR_MIN_DURATION_FRAMES = 45
+PAIR_IOU_MIN = 0.05
+PAIR_CLOSE_CENTER_DISTANCE = 120.0
+PAIR_MIN_MEAN_KEYPOINT_CONF = 0.4
+PAIR_WRIST_MAX_DISTANCE = 150.0
+PAIR_WRIST_IOU_BYPASS = 0.05
+PAIR_SCORE_THRESHOLD = 0.5
+PAIR_OVERLAP_SCORE_IOU_REF = 0.3
+
 # Ultralytics tracker config: "bytetrack.yaml" or "botsort.yaml"
 TRACKER_CONFIG = "bytetrack.yaml"
 

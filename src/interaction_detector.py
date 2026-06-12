@@ -101,5 +101,9 @@ class InteractionDetector:
             if c.consecutive_frames >= self.min_consecutive_frames
         ]
 
+    def get_pair_candidate(self, track_a: int, track_b: int) -> InteractionCandidate | None:
+        """Return internal pair state for validation (duration, consecutive frames)."""
+        return self._active_pairs.get(self._pair_key(track_a, track_b))
+
 
 __all__ = ["InteractionDetector", "InteractionCandidate"]
