@@ -17,7 +17,6 @@ from utils.config import (
     DEFAULT_ACTION_MODEL,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
-    FALL_CONTACT_WINDOW_SECONDS,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
     OUTPUTS_DIR,
@@ -67,12 +66,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=15,
         help="Run action model every N frames once skeleton buffer is full.",
-    )
-    parser.add_argument(
-        "--fall-contact-window",
-        type=float,
-        default=FALL_CONTACT_WINDOW_SECONDS,
-        help="Seconds to look back for pair interaction when mapping single-path falls.",
     )
     parser.add_argument(
         "--interaction-distance",
@@ -165,7 +158,6 @@ def main() -> None:
         event_min_confidence=event_min_conf,
         interaction_distance=args.interaction_distance,
         interaction_frames=args.interaction_frames,
-        fall_contact_window=args.fall_contact_window,
         tracker=args.tracker,
     )
 

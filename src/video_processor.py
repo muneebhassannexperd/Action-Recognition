@@ -14,20 +14,16 @@ _ROOT = os.path.dirname(_SRC)
 sys.path.insert(0, _SRC)
 sys.path.insert(0, _ROOT)
 from utils.class_mapping import (
-    INTERACTION_CORRELATION_CLASSES,
-    InteractionRecord,
     best_fall_stumble_from_topk,
     best_mapped_from_topk,
     enrich_top_k,
     filter_single_target_events,
     filter_target_events,
-    resolve_single_fall_event,
 )
 from utils.config import (
     DEFAULT_ACTION_MODEL,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
-    FALL_CONTACT_WINDOW_SECONDS,
     INFERENCE_STRIDE,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
@@ -64,7 +60,6 @@ class VideoProcessor:
         event_min_confidence: float = EVENT_MIN_CONFIDENCE,
         interaction_distance: float = INTERACTION_DISTANCE,
         interaction_frames: int = INTERACTION_FRAMES,
-        fall_contact_window: float = FALL_CONTACT_WINDOW_SECONDS,
         tracker: str = TRACKER_CONFIG,
     ) -> None:
         yolo_path = str(resolve_yolo_model(pose_model_path))
@@ -88,12 +83,10 @@ class VideoProcessor:
         )
         self.inference_stride = inference_stride
         self.event_min_confidence = event_min_confidence
-        self.fall_contact_window = fall_contact_window
         self._last_pair_infer_frame: dict[tuple[int, int], int] = {}
         self._last_single_infer_frame: dict[int, int] = {}
         self._pair_track_labels: dict[int, TrackActionLabel] = {}
         self._single_track_labels: dict[int, TrackActionLabel] = {}
-        self._interaction_history: list[InteractionRecord] = []
         self._frame_shape: tuple[int, int] | None = None
 
     def _pair_takes_priority(self, track_id: int) -> bool:
@@ -108,24 +101,6 @@ class VideoProcessor:
             if not pair_label.is_normal or tid not in labels:
                 labels[tid] = pair_label
         return labels
-
-    def _record_interaction(self, mapped: dict[str, Any], timestamp: float, frame_idx: int,
-                            track_a: int, track_b: int) -> None:
-        if mapped["target_class"] not in INTERACTION_CORRELATION_CLASSES:
-            return
-        self._interaction_history.append(InteractionRecord(
-            timestamp=timestamp,
-            frame=frame_idx,
-            track_a=track_a,
-            track_b=track_b,
-            target_class=mapped["target_class"],
-        ))
-
-    def _prune_interaction_history(self, timestamp: float) -> None:
-        cutoff = timestamp - self.fall_contact_window
-        self._interaction_history = [
-            r for r in self._interaction_history if r.timestamp >= cutoff
-        ]
 
     def process(
         self,
@@ -159,7 +134,6 @@ class VideoProcessor:
         self._last_single_infer_frame.clear()
         self._pair_track_labels.clear()
         self._single_track_labels.clear()
-        self._interaction_history.clear()
 
         predict_kwargs: dict[str, Any] = {}
         if self._frame_shape is not None:
@@ -172,7 +146,6 @@ class VideoProcessor:
                 break
             frame_idx += 1
             timestamp = frame_idx / fps
-            self._prune_interaction_history(timestamp)
 
             tracks = self.pose_detector.track(frame)
             self.interaction_detector.update(tracks, frame_idx)
@@ -250,9 +223,6 @@ class VideoProcessor:
                 )
 
                 for mapped in filter_target_events(top_k, min_confidence=self.event_min_confidence):
-                    self._record_interaction(
-                        mapped, timestamp, frame_idx, track_a, track_b,
-                    )
                     event_key = (
                         "pair",
                         mapped["target_class"],
@@ -298,18 +268,9 @@ class VideoProcessor:
                 enriched_top_k = enrich_top_k(top_k)
                 self._last_single_infer_frame[tid] = frame_idx
 
-                fall_pred = best_fall_stumble_from_topk(
+                mapped_best = best_fall_stumble_from_topk(
                     top_k, min_confidence=self.event_min_confidence,
                 )
-                mapped_best = None
-                if fall_pred is not None:
-                    mapped_best = resolve_single_fall_event(
-                        fall_pred,
-                        tid,
-                        timestamp,
-                        self._interaction_history,
-                        self.fall_contact_window,
-                    )
 
                 if mapped_best is not None and not self._pair_takes_priority(tid):
                     self._single_track_labels[tid] = TrackActionLabel(
@@ -338,10 +299,6 @@ class VideoProcessor:
 
                 for mapped in filter_single_target_events(
                     top_k,
-                    track_id=tid,
-                    timestamp=timestamp,
-                    interaction_history=self._interaction_history,
-                    contact_window_seconds=self.fall_contact_window,
                     min_confidence=self.event_min_confidence,
                 ):
                     if self._pair_takes_priority(tid):
@@ -390,7 +347,6 @@ class VideoProcessor:
             "window_size": self.buffer.window_size,
             "interaction_distance": self.interaction_detector.distance_threshold,
             "interaction_frames": self.interaction_detector.min_consecutive_frames,
-            "fall_contact_window": self.fall_contact_window,
             "tracker": self.pose_detector.tracker,
             "events": events,
             "raw_predictions": raw_predictions,
