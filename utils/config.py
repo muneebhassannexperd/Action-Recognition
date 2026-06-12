@@ -57,23 +57,23 @@ DEFAULT_ACTION_MODEL = "posec3d"
 
 # Rolling skeleton windows (frames) before resampling to CLIP_LEN / POSEC3D_CLIP_LEN
 WINDOW_SIZES = (30, 48, 60, 90, 100, 120)
-DEFAULT_WINDOW_SIZE = 30
+DEFAULT_WINDOW_SIZE = 60
 
 # Run CTR-GCN every N frames once pair buffer is full
-INFERENCE_STRIDE = 15
+INFERENCE_STRIDE = 30
 #TOP_K = 5
 TOP_K = 10
 
 # Two-person interaction gating (pixel distance between bbox centers)
 INTERACTION_DISTANCE = 250.0
-INTERACTION_FRAMES = 10
+INTERACTION_FRAMES = 60
 
 # Ultralytics tracker config: "bytetrack.yaml" or "botsort.yaml"
 TRACKER_CONFIG = "bytetrack.yaml"
 
 # Min confidence for non-Normal target events (see utils/class_mapping.py)
 
-EVENT_MIN_CONFIDENCE = 0.15
+EVENT_MIN_CONFIDENCE = 0.35
 VIOLENCE_MIN_CONFIDENCE = EVENT_MIN_CONFIDENCE  # backward-compatible alias
 
 # Single-track fall -> person_falls_after_contact if same track had a pair
