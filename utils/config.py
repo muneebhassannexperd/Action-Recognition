@@ -50,7 +50,7 @@ POSEC3D_NUM_JOINTS = 17
 POSEC3D_CLIP_LEN = 48
 POSEC3D_HEATMAP_SIZE = 64
 # ``keypoint``: 17 joint heatmaps (COCO-17). ``limb``: matches official NTU120 joint.pth training.
-POSEC3D_HEATMAP_MODE = "keypoint"
+POSEC3D_HEATMAP_MODE = "limb"
 
 ACTION_MODELS = ("ctrgcn", "posec3d")
 DEFAULT_ACTION_MODEL = "posec3d"
@@ -103,7 +103,17 @@ INPUT_MODES = ("video", "keypoints")
 DEFAULT_INPUT_MODE = "video"
 
 OUTPUT_FORMATS = ("report", "behavior_cues")
-DEFAULT_OUTPUT_FORMAT = "behavior_cues"
+# Enforced by --input-mode (see src/main.py); do not mix manually.
+VIDEO_OUTPUT_FORMAT = "report"
+KEYPOINTS_OUTPUT_FORMAT = "behavior_cues"
+
+
+def output_format_for_input_mode(input_mode: str) -> str:
+    if input_mode == "video":
+        return VIDEO_OUTPUT_FORMAT
+    if input_mode == "keypoints":
+        return KEYPOINTS_OUTPUT_FORMAT
+    raise ValueError(f"unknown input_mode: {input_mode!r}")
 
 # behavior_cues delivery envelope (see utils/behavior_cues.py)
 BEHAVIOR_CUES_MODULE = "action_recognition_pipeline"

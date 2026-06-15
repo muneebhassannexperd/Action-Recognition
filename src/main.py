@@ -21,7 +21,6 @@ from utils.config import (
     DEFAULT_CAMERA_ID,
     DEFAULT_INPUT_MODE,
     DEFAULT_ORGANIZATION_ID,
-    DEFAULT_OUTPUT_FORMAT,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
     INPUT_MODES,
@@ -30,11 +29,11 @@ from utils.config import (
     MOTION_GATE_ENABLED,
     MOTION_THRESHOLD_PAIR,
     MOTION_THRESHOLD_SINGLE,
-    OUTPUT_FORMATS,
     OUTPUTS_DIR,
     POSEC3D_HEATMAP_MODE,
     TRACKER_CONFIG,
     WINDOW_SIZES,
+    output_format_for_input_mode,
 )
 
 from video_processor import VideoProcessor
@@ -49,7 +48,8 @@ def parse_args() -> argparse.Namespace:
         "--input-mode",
         default=DEFAULT_INPUT_MODE,
         choices=INPUT_MODES,
-        help="Input source: video file (default) or client keypoints stream.",
+        help="video: MP4 in → annotated MP4 + debug JSON out. "
+        "keypoints: client JSONL in → behavior_cues JSONL out.",
     )
     parser.add_argument(
         "--keypoints",
@@ -59,13 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="Output path (default: outputs/<stem>.jsonl or .json by format).",
-    )
-    parser.add_argument(
-        "--output-format",
-        default=DEFAULT_OUTPUT_FORMAT,
-        choices=OUTPUT_FORMATS,
-        help="report: full debug JSON; behavior_cues: client JSONL delivery format.",
+        help="Output path (default: outputs/<stem>.json for video, <stem>_cues.jsonl for keypoints).",
     )
     parser.add_argument(
         "--camera-id",
@@ -185,7 +179,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-annotated-video",
         action="store_true",
-        help="Skip writing annotated MP4 (JSON is still saved).",
+        help="Skip annotated MP4 (video mode only; keypoints mode never writes video).",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        help="Fallback FPS for keypoints input when not present in the file.",
+    )
+    parser.add_argument(
+        "--frame-width",
+        type=int,
+        default=1920,
+        help="Fallback frame width for keypoints input (PoseC3D heatmap scale).",
+    )
+    parser.add_argument(
+        "--frame-height",
+        type=int,
+        default=1080,
+        help="Fallback frame height for keypoints input (PoseC3D heatmap scale).",
     )
     parser.add_argument(
         "--annotated-output",
@@ -193,6 +205,14 @@ def parse_args() -> argparse.Namespace:
         help="Annotated video path (default: outputs/<video_stem>_annotated.mp4).",
     )
     return parser.parse_args()
+
+
+def _resolve_output_path(args: argparse.Namespace, base: str, output_format: str) -> str:
+    if args.output:
+        return args.output
+    if output_format == "behavior_cues":
+        return str(OUTPUTS_DIR / f"{base}_cues.jsonl")
+    return str(OUTPUTS_DIR / f"{base}.json")
 
 
 def main() -> None:
@@ -205,27 +225,32 @@ def main() -> None:
         return
 
     if args.input_mode == "keypoints":
-        raise SystemExit(
-            "Error: --input-mode keypoints is not implemented yet. Use --input-mode video."
-        )
-
-    if not args.video:
-        raise SystemExit("Error: --video is required when --input-mode video.")
-
-    if not os.path.exists(args.video):
-        raise FileNotFoundError(f"Video not found: {args.video}")
-
-    base = os.path.splitext(os.path.basename(args.video))[0]
-    if args.output:
-        output_path = args.output
-    elif args.output_format == "behavior_cues":
-        output_path = str(OUTPUTS_DIR / f"{base}_cues.jsonl")
+        if not args.keypoints:
+            raise SystemExit("Error: --keypoints is required when --input-mode keypoints.")
+        if not os.path.exists(args.keypoints):
+            raise FileNotFoundError(f"Keypoints file not found: {args.keypoints}")
+        if args.video:
+            print("Note: --video is ignored in keypoints mode.")
+        if args.annotated_output:
+            print("Note: --annotated-output is ignored in keypoints mode (no video input).")
+        base = os.path.splitext(os.path.basename(args.keypoints))[0]
+        if base.endswith("_keypoints"):
+            base = base[: -len("_keypoints")]
     else:
-        output_path = str(OUTPUTS_DIR / f"{base}.json")
+        if not args.video:
+            raise SystemExit("Error: --video is required when --input-mode video.")
+        if not os.path.exists(args.video):
+            raise FileNotFoundError(f"Video not found: {args.video}")
+        if args.keypoints:
+            print("Note: --keypoints is ignored in video mode.")
+        base = os.path.splitext(os.path.basename(args.video))[0]
+
+    output_format = output_format_for_input_mode(args.input_mode)
+    output_path = _resolve_output_path(args, base, output_format)
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
     annotated_path = None
-    if not args.no_annotated_video:
+    if args.input_mode == "video" and not args.no_annotated_video:
         annotated_path = args.annotated_output or str(OUTPUTS_DIR / f"{base}_annotated.mp4")
 
     event_min_conf = (
@@ -266,24 +291,43 @@ def main() -> None:
             if args.motion_threshold_single is not None
             else MOTION_THRESHOLD_SINGLE
         ),
+        input_mode=args.input_mode,
     )
 
-    report = processor.process(
-        args.video,
+    process_kwargs = dict(
         output_json_path=output_path,
-        annotated_output_path=annotated_path,
-        output_format=args.output_format,
+        output_format=output_format,
         camera_id=args.camera_id,
         organization_id=args.organization_id,
         keypoint_model=args.keypoint_model,
         module=args.module_name,
         module_version=args.module_version,
     )
-    print(f"\nSaved {args.output_format} output: {output_path}")
+
+    if args.input_mode == "keypoints":
+        report = processor.process_keypoints(
+            args.keypoints,
+            default_fps=args.fps or 30.0,
+            default_width=args.frame_width,
+            default_height=args.frame_height,
+            **process_kwargs,
+        )
+    else:
+        report = processor.process(
+            args.video,
+            annotated_output_path=annotated_path,
+            **process_kwargs,
+        )
+    print(f"\nInput mode: {args.input_mode}")
+    print(f"Saved output ({output_format}): {output_path}")
     if annotated_path:
         print(f"Saved annotated video: {annotated_path}")
-    event_count = len(report.get("behavior_cues", report.get("events", [])))
-    print(f"Behavior cues emitted: {event_count}")
+    if output_format == "behavior_cues":
+        event_count = len(report.get("behavior_cues", []))
+        print(f"Behavior cues emitted: {event_count}")
+    else:
+        event_count = len(report.get("events", []))
+        print(f"Target events detected (non-Normal): {event_count}")
     print(f"Pair inference segments: {report.get('pair_inference_segments', 0)}")
     print(f"Single inference segments: {report.get('single_inference_segments', 0)}")
     motion = report.get("motion_gate", {})
