@@ -98,6 +98,20 @@ MOTION_THRESHOLD_PAIR = 0.020
 MOTION_THRESHOLD_SINGLE = 0.012
 MOTION_KEYPOINT_CONF = 0.25
 
+# --- CLI I/O modes (video vs client keypoints in; report vs behavior_cues out) ---
+INPUT_MODES = ("video", "keypoints")
+DEFAULT_INPUT_MODE = "video"
+
+OUTPUT_FORMATS = ("report", "behavior_cues")
+DEFAULT_OUTPUT_FORMAT = "behavior_cues"
+
+# behavior_cues delivery envelope (see utils/behavior_cues.py)
+BEHAVIOR_CUES_MODULE = "action_recognition_pipeline"
+BEHAVIOR_CUES_MODULE_VERSION = "0.1.0"
+BEHAVIOR_CUES_KEYPOINT_MODEL = "yolo11n-pose"
+DEFAULT_CAMERA_ID = 0
+DEFAULT_ORGANIZATION_ID = 0
+
 
 def load_label_map(path: Path | None = None) -> dict[int, str]:
     label_path = path or LABELS_FILE

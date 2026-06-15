@@ -20,8 +20,15 @@ from utils.class_mapping import (
     filter_single_target_events,
     filter_target_events,
 )
+from utils.behavior_cues import events_to_behavior_cues, write_behavior_cues_jsonl
 from utils.config import (
+    BEHAVIOR_CUES_KEYPOINT_MODEL,
+    BEHAVIOR_CUES_MODULE,
+    BEHAVIOR_CUES_MODULE_VERSION,
     DEFAULT_ACTION_MODEL,
+    DEFAULT_CAMERA_ID,
+    DEFAULT_ORGANIZATION_ID,
+    DEFAULT_OUTPUT_FORMAT,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
     INFERENCE_STRIDE,
@@ -194,6 +201,13 @@ class VideoProcessor:
         video_path: str,
         output_json_path: str | None = None,
         annotated_output_path: str | None = None,
+        *,
+        output_format: str = DEFAULT_OUTPUT_FORMAT,
+        camera_id: int = DEFAULT_CAMERA_ID,
+        organization_id: int = DEFAULT_ORGANIZATION_ID,
+        keypoint_model: str = BEHAVIOR_CUES_KEYPOINT_MODEL,
+        module: str = BEHAVIOR_CUES_MODULE,
+        module_version: str = BEHAVIOR_CUES_MODULE_VERSION,
     ) -> dict[str, Any]:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -534,9 +548,25 @@ class VideoProcessor:
 
         if output_json_path:
             os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
-            with open(output_json_path, "w", encoding="utf-8") as f:
-                json.dump(report, f, indent=2)
+            if output_format == "behavior_cues":
+                cue_records = events_to_behavior_cues(
+                    events,
+                    camera_id=camera_id,
+                    organization_id=organization_id,
+                    fps=fps,
+                    window_size=self.buffer.window_size,
+                    action_model=self.action_model,
+                    keypoint_model=keypoint_model,
+                    module=module,
+                    module_version=module_version,
+                )
+                write_behavior_cues_jsonl(output_json_path, cue_records)
+                report["behavior_cues"] = cue_records
+            else:
+                with open(output_json_path, "w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
 
+        report["output_format"] = output_format
         return report
 
     @staticmethod

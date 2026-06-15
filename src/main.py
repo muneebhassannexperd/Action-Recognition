@@ -14,14 +14,23 @@ sys.path.insert(0, _ROOT)
 
 from utils.config import (
     ACTION_MODELS,
+    BEHAVIOR_CUES_KEYPOINT_MODEL,
+    BEHAVIOR_CUES_MODULE,
+    BEHAVIOR_CUES_MODULE_VERSION,
     DEFAULT_ACTION_MODEL,
+    DEFAULT_CAMERA_ID,
+    DEFAULT_INPUT_MODE,
+    DEFAULT_ORGANIZATION_ID,
+    DEFAULT_OUTPUT_FORMAT,
     DEFAULT_WINDOW_SIZE,
     EVENT_MIN_CONFIDENCE,
+    INPUT_MODES,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
     MOTION_GATE_ENABLED,
     MOTION_THRESHOLD_PAIR,
     MOTION_THRESHOLD_SINGLE,
+    OUTPUT_FORMATS,
     OUTPUTS_DIR,
     POSEC3D_HEATMAP_MODE,
     TRACKER_CONFIG,
@@ -35,11 +44,55 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="YOLO Pose + action recognition (CTR-GCN or PoseC3D) on CCTV video",
     )
-    parser.add_argument("--video", default=None, help="Path to input video.")
+    parser.add_argument("--video", default=None, help="Path to input video (--input-mode video).")
+    parser.add_argument(
+        "--input-mode",
+        default=DEFAULT_INPUT_MODE,
+        choices=INPUT_MODES,
+        help="Input source: video file (default) or client keypoints stream.",
+    )
+    parser.add_argument(
+        "--keypoints",
+        default=None,
+        help="Client keypoints input path (required when --input-mode keypoints).",
+    )
     parser.add_argument(
         "--output",
         default=None,
-        help="Output JSON path (default: outputs/<video_stem>.json).",
+        help="Output path (default: outputs/<stem>.jsonl or .json by format).",
+    )
+    parser.add_argument(
+        "--output-format",
+        default=DEFAULT_OUTPUT_FORMAT,
+        choices=OUTPUT_FORMATS,
+        help="report: full debug JSON; behavior_cues: client JSONL delivery format.",
+    )
+    parser.add_argument(
+        "--camera-id",
+        type=int,
+        default=DEFAULT_CAMERA_ID,
+        help="camera_id for behavior_cues output.",
+    )
+    parser.add_argument(
+        "--organization-id",
+        type=int,
+        default=DEFAULT_ORGANIZATION_ID,
+        help="organization_id for behavior_cues output.",
+    )
+    parser.add_argument(
+        "--keypoint-model",
+        default=BEHAVIOR_CUES_KEYPOINT_MODEL,
+        help="keypoint_model label in behavior_cues metadata.",
+    )
+    parser.add_argument(
+        "--module-name",
+        default=BEHAVIOR_CUES_MODULE,
+        help="metadata.module for behavior_cues output.",
+    )
+    parser.add_argument(
+        "--module-version",
+        default=BEHAVIOR_CUES_MODULE_VERSION,
+        help="metadata.module_version for behavior_cues output.",
     )
     parser.add_argument("--pose-model", default=None, help="YOLO pose weights (.pt).")
     parser.add_argument("--ctrgcn-weights", default=None, help="CTR-GCN joint weights (.pt).")
@@ -151,14 +204,24 @@ def main() -> None:
         print(json.dumps(JointMapper.mapping_documentation(), indent=2))
         return
 
+    if args.input_mode == "keypoints":
+        raise SystemExit(
+            "Error: --input-mode keypoints is not implemented yet. Use --input-mode video."
+        )
+
     if not args.video:
-        raise SystemExit("Error: --video is required unless using --show-mapping.")
+        raise SystemExit("Error: --video is required when --input-mode video.")
 
     if not os.path.exists(args.video):
         raise FileNotFoundError(f"Video not found: {args.video}")
 
     base = os.path.splitext(os.path.basename(args.video))[0]
-    output_path = args.output or str(OUTPUTS_DIR / f"{base}.json")
+    if args.output:
+        output_path = args.output
+    elif args.output_format == "behavior_cues":
+        output_path = str(OUTPUTS_DIR / f"{base}_cues.jsonl")
+    else:
+        output_path = str(OUTPUTS_DIR / f"{base}.json")
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
     annotated_path = None
@@ -209,11 +272,18 @@ def main() -> None:
         args.video,
         output_json_path=output_path,
         annotated_output_path=annotated_path,
+        output_format=args.output_format,
+        camera_id=args.camera_id,
+        organization_id=args.organization_id,
+        keypoint_model=args.keypoint_model,
+        module=args.module_name,
+        module_version=args.module_version,
     )
-    print(f"\nSaved JSON: {output_path}")
+    print(f"\nSaved {args.output_format} output: {output_path}")
     if annotated_path:
         print(f"Saved annotated video: {annotated_path}")
-    print(f"Target events detected (non-Normal): {len(report['events'])}")
+    event_count = len(report.get("behavior_cues", report.get("events", [])))
+    print(f"Behavior cues emitted: {event_count}")
     print(f"Pair inference segments: {report.get('pair_inference_segments', 0)}")
     print(f"Single inference segments: {report.get('single_inference_segments', 0)}")
     motion = report.get("motion_gate", {})

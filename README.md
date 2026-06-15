@@ -43,29 +43,41 @@ See [pretrained_model/README.md](pretrained_model/README.md) for manual download
 ## Usage
 
 ```bash
-# CTR-GCN (NTU-25 skeleton, default)
+# Default: video in, behavior_cues JSONL out
 python3 src/main.py --video path/to/clip.mp4 --device cpu
 
-# PoseC3D (raw COCO-17 keypoints)
+# Internal debug report (full diagnostics JSON)
+python3 src/main.py --video path/to/clip.mp4 --output-format report --device cpu
+
+# PoseC3D backend
 python3 src/main.py --video path/to/clip.mp4 --action-model posec3d --device cpu
 
-# Official PoseC3D checkpoint alignment (limb heatmaps)
-python3 src/main.py --video path/to/clip.mp4 --action-model posec3d --posec3d-heatmap limb --device cpu
+# Client delivery fields
+python3 src/main.py --video path/to/clip.mp4 \
+  --output-format behavior_cues \
+  --camera-id 0 --organization-id 0 \
+  --keypoint-model yolo11n-pose
 ```
+
+Future: `--input-mode keypoints --keypoints client_tracks.jsonl` (client-supplied YOLO keypoints).
 
 ### Common options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--action-model` | `ctrgcn` | `ctrgcn` or `posec3d` |
+| `--input-mode` | `video` | `video` or `keypoints` (keypoints: coming soon) |
+| `--output-format` | `behavior_cues` | `behavior_cues` (JSONL) or `report` (debug JSON) |
+| `--action-model` | `posec3d` | `ctrgcn` or `posec3d` |
 | `--window-size` | `30` | Skeleton buffer frames (30, 48, 60, 90, 100, 120) |
 | `--interaction-distance` | `250` | Max pixel distance for pair gating |
-| `--interaction-frames` | `10` | Consecutive close frames before inference |
+| `--interaction-frames` | `30` | Consecutive close frames before inference |
+| `--camera-id` | `0` | `camera_id` in behavior_cues records |
+| `--organization-id` | `0` | `organization_id` in behavior_cues records |
 | `--tracker` | `bytetrack.yaml` | `bytetrack.yaml` or `botsort.yaml` |
 | `--no-annotated-video` | off | Skip annotated MP4 |
 | `--device` | `cuda` | `cuda` or `cpu` |
 
-Outputs are written to `outputs/<video_stem>.json` and `outputs/<video_stem>_annotated.mp4`.
+Outputs default to `outputs/<video_stem>_cues.jsonl` (behavior_cues) or `outputs/<video_stem>.json` (report), plus `outputs/<video_stem>_annotated.mp4` unless disabled.
 
 ## Project structure
 
