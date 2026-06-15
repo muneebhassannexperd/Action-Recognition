@@ -35,12 +35,24 @@ from utils.config import (
     PAIR_SCORE_THRESHOLD,
     PAIR_WRIST_IOU_BYPASS,
     PAIR_WRIST_MAX_DISTANCE,
+    MOTION_GATE_ENABLED,
+    MOTION_KEYPOINT_CONF,
+    MOTION_THRESHOLD_PAIR,
+    MOTION_THRESHOLD_SINGLE,
     TRACKER_CONFIG,
     resolve_yolo_model,
 )
 
 from action_recognizer import ActionRecognizer, create_action_recognizer
 from interaction_detector import InteractionDetector
+from motion_energy import (
+    MotionEnergyResult,
+    MotionGateDiagnostics,
+    bbox_height,
+    compute_pair_motion_energy,
+    compute_track_motion_energy,
+    passes_motion_gate,
+)
 from pair_validator import (
     PairValidationConfig,
     PairValidationDiagnostics,
@@ -77,6 +89,10 @@ class VideoProcessor:
         interaction_frames: int = INTERACTION_FRAMES,
         tracker: str = TRACKER_CONFIG,
         pair_validation: PairValidationConfig | None = None,
+        motion_gate_enabled: bool = MOTION_GATE_ENABLED,
+        motion_threshold_single: float | None = MOTION_THRESHOLD_SINGLE,
+        motion_threshold_pair: float | None = MOTION_THRESHOLD_PAIR,
+        motion_keypoint_conf: float = MOTION_KEYPOINT_CONF,
     ) -> None:
         yolo_path = str(resolve_yolo_model(pose_model_path))
         self.action_model = action_model.lower().strip()
@@ -115,6 +131,10 @@ class VideoProcessor:
             interaction_distance_px=interaction_distance,
             overlap_score_iou_ref=PAIR_OVERLAP_SCORE_IOU_REF,
         )
+        self.motion_gate_enabled = motion_gate_enabled
+        self.motion_threshold_single = motion_threshold_single
+        self.motion_threshold_pair = motion_threshold_pair
+        self.motion_keypoint_conf = motion_keypoint_conf
         self._last_pair_infer_frame: dict[tuple[int, int], int] = {}
         self._last_single_infer_frame: dict[int, int] = {}
         self._pair_track_labels: dict[int, TrackActionLabel] = {}
@@ -154,6 +174,21 @@ class VideoProcessor:
         consecutive = pair_info.consecutive_frames if pair_info is not None else 0
         return validate_pair(ta, tb, consecutive, self.pair_validation)
 
+    def _track_motion_energy(
+        self,
+        track_id: int,
+        tracks_by_id: dict[int, dict[str, Any]],
+    ) -> MotionEnergyResult:
+        seq = self.buffer.get_sequence(track_id)
+        track = tracks_by_id.get(track_id)
+        if seq is None or track is None:
+            return MotionEnergyResult(0.0, 0.0, 0, 1.0)
+        return compute_track_motion_energy(
+            seq,
+            bbox_height(track["bbox"]),
+            keypoint_conf_threshold=self.motion_keypoint_conf,
+        )
+
     def process(
         self,
         video_path: str,
@@ -183,6 +218,11 @@ class VideoProcessor:
         raw_predictions: list[dict[str, Any]] = []
         seen_event_keys: set[tuple] = set()
         pair_validation_diag = PairValidationDiagnostics()
+        motion_gate_diag = MotionGateDiagnostics(
+            gate_enabled=self.motion_gate_enabled,
+            threshold_single=self.motion_threshold_single,
+            threshold_pair=self.motion_threshold_pair,
+        )
         self._last_pair_infer_frame.clear()
         self._last_single_infer_frame.clear()
         self._pair_track_labels.clear()
@@ -222,6 +262,8 @@ class VideoProcessor:
                 if kpts:
                     self.buffer.add(tid, kpts)
 
+            tracks_by_id = {t["track_id"]: t for t in tracks}
+
             # --- Pair inference ---
             for track_a, track_b in active_pairs:
                 pair_key = (track_a, track_b)
@@ -246,6 +288,28 @@ class VideoProcessor:
                         f"[pair reject] t={timestamp:.2f}s pair={track_a}-{track_b}: "
                         f"{reason_str} | score={validation.pair_score:.3f}"
                     )
+                    continue
+
+                energy_a = self._track_motion_energy(track_a, tracks_by_id)
+                energy_b = self._track_motion_energy(track_b, tracks_by_id)
+                pair_motion = compute_pair_motion_energy(energy_a, energy_b)
+                pair_skipped = not passes_motion_gate(
+                    pair_motion["motion_energy"],
+                    self.motion_threshold_pair,
+                    enabled=self.motion_gate_enabled,
+                )
+                motion_gate_diag.record_pair(
+                    frame=frame_idx,
+                    timestamp=timestamp,
+                    track_a=track_a,
+                    track_b=track_b,
+                    energy_a=energy_a,
+                    energy_b=energy_b,
+                    combined=pair_motion,
+                    threshold=self.motion_threshold_pair,
+                    skipped=pair_skipped,
+                )
+                if pair_skipped:
                     continue
 
                 pair_seq = self.buffer.get_pair_sequence(track_a, track_b)
@@ -331,6 +395,23 @@ class VideoProcessor:
 
                 single_seq = self.buffer.get_single_sequence(tid)
                 if single_seq is None:
+                    continue
+
+                single_motion = self._track_motion_energy(tid, tracks_by_id)
+                single_skipped = not passes_motion_gate(
+                    single_motion.motion_energy,
+                    self.motion_threshold_single,
+                    enabled=self.motion_gate_enabled,
+                )
+                motion_gate_diag.record_single(
+                    frame=frame_idx,
+                    timestamp=timestamp,
+                    track_id=tid,
+                    result=single_motion,
+                    threshold=self.motion_threshold_single,
+                    skipped=single_skipped,
+                )
+                if single_skipped:
                     continue
 
                 top_k = self.recognizer.predict(
@@ -437,6 +518,7 @@ class VideoProcessor:
                 },
                 **pair_validation_diag.to_report(),
             },
+            "motion_gate": motion_gate_diag.to_report(),
             "tracker": self.pose_detector.tracker,
             "events": events,
             "raw_predictions": raw_predictions,
@@ -448,6 +530,7 @@ class VideoProcessor:
         report["single_inference_segments"] = single_preds
 
         pair_validation_diag.print_summary()
+        motion_gate_diag.print_summary()
 
         if output_json_path:
             os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)

@@ -19,6 +19,9 @@ from utils.config import (
     EVENT_MIN_CONFIDENCE,
     INTERACTION_DISTANCE,
     INTERACTION_FRAMES,
+    MOTION_GATE_ENABLED,
+    MOTION_THRESHOLD_PAIR,
+    MOTION_THRESHOLD_SINGLE,
     OUTPUTS_DIR,
     POSEC3D_HEATMAP_MODE,
     TRACKER_CONFIG,
@@ -98,6 +101,24 @@ def parse_args() -> argparse.Namespace:
         help="Min confidence for annotated video overlays (default: same as --event-min-confidence).",
     )
     parser.add_argument(
+        "--motion-gate",
+        action=argparse.BooleanOptionalAction,
+        default=MOTION_GATE_ENABLED,
+        help="Skip PoseC3D when skeleton motion energy is below threshold.",
+    )
+    parser.add_argument(
+        "--motion-threshold-pair",
+        type=float,
+        default=None,
+        help=f"Min normalized pair motion energy (default: {MOTION_THRESHOLD_PAIR}).",
+    )
+    parser.add_argument(
+        "--motion-threshold-single",
+        type=float,
+        default=None,
+        help=f"Min normalized single-track motion energy (default: {MOTION_THRESHOLD_SINGLE}).",
+    )
+    parser.add_argument(
         "--violence-min-confidence",
         type=float,
         default=None,
@@ -171,6 +192,17 @@ def main() -> None:
         interaction_distance=args.interaction_distance,
         interaction_frames=args.interaction_frames,
         tracker=args.tracker,
+        motion_gate_enabled=args.motion_gate,
+        motion_threshold_pair=(
+            args.motion_threshold_pair
+            if args.motion_threshold_pair is not None
+            else MOTION_THRESHOLD_PAIR
+        ),
+        motion_threshold_single=(
+            args.motion_threshold_single
+            if args.motion_threshold_single is not None
+            else MOTION_THRESHOLD_SINGLE
+        ),
     )
 
     report = processor.process(
@@ -184,6 +216,14 @@ def main() -> None:
     print(f"Target events detected (non-Normal): {len(report['events'])}")
     print(f"Pair inference segments: {report.get('pair_inference_segments', 0)}")
     print(f"Single inference segments: {report.get('single_inference_segments', 0)}")
+    motion = report.get("motion_gate", {})
+    if motion:
+        print(
+            f"Motion gate: pair {motion.get('pair_processed', 0)} processed / "
+            f"{motion.get('pair_skipped', 0)} skipped, "
+            f"single {motion.get('single_processed', 0)} processed / "
+            f"{motion.get('single_skipped', 0)} skipped"
+        )
 
 
 if __name__ == "__main__":

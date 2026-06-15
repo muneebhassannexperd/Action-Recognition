@@ -90,6 +90,14 @@ OVERLAY_MIN_CONFIDENCE = EVENT_MIN_CONFIDENCE
 YOLO_KEYPOINT_CONF_THRESHOLD = 0.3
 POSE_CONF_THRESHOLD = 0.25
 
+# Skeleton motion-energy gate (see src/motion_energy.py). Calibrated on crowd vs push clips.
+MOTION_GATE_ENABLED = True
+#MOTION_THRESHOLD_PAIR = 0.020
+MOTION_THRESHOLD_PAIR = 0.020
+#MOTION_THRESHOLD_SINGLE = 0.012
+MOTION_THRESHOLD_SINGLE = 0.012
+MOTION_KEYPOINT_CONF = 0.25
+
 
 def load_label_map(path: Path | None = None) -> dict[int, str]:
     label_path = path or LABELS_FILE
