@@ -91,7 +91,7 @@ YOLO_KEYPOINT_CONF_THRESHOLD = 0.3
 POSE_CONF_THRESHOLD = 0.25
 
 # Skeleton motion-energy gate (see src/motion_energy.py). Calibrated on crowd vs push clips.
-MOTION_GATE_ENABLED = False
+MOTION_GATE_ENABLED = True
 #MOTION_THRESHOLD_PAIR = 0.020
 MOTION_THRESHOLD_PAIR = 0.020
 #MOTION_THRESHOLD_SINGLE = 0.012

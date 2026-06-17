@@ -382,7 +382,11 @@ class VideoProcessor:
                     "confidence": mapped["confidence"],
                 })
 
+        paired_ids = {a for pair in active_pairs for a in pair}
+
         for tid in sorted(active_ids):
+            if tid in paired_ids:
+                continue
             if not self.buffer.is_ready(tid):
                 continue
 

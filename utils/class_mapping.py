@@ -15,7 +15,7 @@ CLASS_MAPPING: dict[int, str] = {
     51: "swing_attempt",
     106: "swing_attempt",
     55: "grapple_clinch",
-    108: "stumble_recover",
+    108: "push_shove",
     43: "stumble_recover",
     42: "stumble_recover",
     54: "aggressive_posture",
@@ -43,7 +43,7 @@ PAIR_TARGET_CLASSES = frozenset({
 })
 
 # NTU classes used to detect fall / instability on the single-person path.
-FALL_STUMBLE_NTU_IDS = frozenset({42, 43, 108})
+FALL_STUMBLE_NTU_IDS = frozenset({42, 43})
 
 # Single path must never emit these directly from model mapping.
 SINGLE_EXCLUDED_TARGETS = frozenset({
