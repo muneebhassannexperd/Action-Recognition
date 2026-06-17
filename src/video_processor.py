@@ -22,9 +22,6 @@ from utils.class_mapping import (
 )
 from utils.behavior_cues import events_to_behavior_cues, write_behavior_cues_jsonl
 from utils.config import (
-    BEHAVIOR_CUES_KEYPOINT_MODEL,
-    BEHAVIOR_CUES_MODULE,
-    BEHAVIOR_CUES_MODULE_VERSION,
     DEFAULT_ACTION_MODEL,
     DEFAULT_CAMERA_ID,
     DEFAULT_INPUT_MODE,
@@ -540,23 +537,13 @@ class VideoProcessor:
         events: list[dict[str, Any]],
         path: str,
         *,
-        fps: float,
         camera_id: int,
         organization_id: int,
-        keypoint_model: str,
-        module: str,
-        module_version: str,
     ) -> list[dict[str, Any]]:
         cue_records = events_to_behavior_cues(
             events,
             camera_id=camera_id,
             organization_id=organization_id,
-            fps=fps,
-            window_size=self.buffer.window_size,
-            action_model=self.action_model,
-            keypoint_model=keypoint_model,
-            module=module,
-            module_version=module_version,
         )
         write_behavior_cues_jsonl(path, cue_records)
         return cue_records
@@ -569,29 +556,19 @@ class VideoProcessor:
         *,
         output_format: str,
         behavior_cues_jsonl_path: str | None = None,
-        fps: float,
         camera_id: int,
         organization_id: int,
-        keypoint_model: str,
-        module: str,
-        module_version: str,
     ) -> dict[str, Any]:
         cues_path = behavior_cues_jsonl_path
         if output_format == "behavior_cues" and output_json_path and not cues_path:
             cues_path = output_json_path
 
-        cue_kwargs = dict(
-            fps=fps,
-            camera_id=camera_id,
-            organization_id=organization_id,
-            keypoint_model=keypoint_model,
-            module=module,
-            module_version=module_version,
-        )
         if cues_path:
             os.makedirs(os.path.dirname(cues_path) or ".", exist_ok=True)
             report["behavior_cues"] = self._write_behavior_cues_jsonl(
-                events, cues_path, **cue_kwargs,
+                events, cues_path,
+                camera_id=camera_id,
+                organization_id=organization_id,
             )
 
         if output_json_path and output_format != "behavior_cues":
@@ -614,9 +591,6 @@ class VideoProcessor:
         output_format: str = VIDEO_OUTPUT_FORMAT,
         camera_id: int = DEFAULT_CAMERA_ID,
         organization_id: int = DEFAULT_ORGANIZATION_ID,
-        keypoint_model: str = BEHAVIOR_CUES_KEYPOINT_MODEL,
-        module: str = BEHAVIOR_CUES_MODULE,
-        module_version: str = BEHAVIOR_CUES_MODULE_VERSION,
     ) -> dict[str, Any]:
         if self.pose_detector is None:
             raise RuntimeError("Video processing requires input_mode='video'.")
@@ -702,12 +676,8 @@ class VideoProcessor:
             output_json_path,
             output_format=output_format,
             behavior_cues_jsonl_path=behavior_cues_jsonl_path,
-            fps=fps,
             camera_id=camera_id,
             organization_id=organization_id,
-            keypoint_model=keypoint_model,
-            module=module,
-            module_version=module_version,
         )
 
     def process_keypoints(
@@ -718,9 +688,6 @@ class VideoProcessor:
         output_format: str = KEYPOINTS_OUTPUT_FORMAT,
         camera_id: int = DEFAULT_CAMERA_ID,
         organization_id: int = DEFAULT_ORGANIZATION_ID,
-        keypoint_model: str = BEHAVIOR_CUES_KEYPOINT_MODEL,
-        module: str = BEHAVIOR_CUES_MODULE,
-        module_version: str = BEHAVIOR_CUES_MODULE_VERSION,
         default_fps: float = 30.0,
         default_width: int = 1920,
         default_height: int = 1080,
@@ -775,12 +742,8 @@ class VideoProcessor:
             events,
             output_json_path,
             output_format=output_format,
-            fps=meta.fps,
             camera_id=camera_id,
             organization_id=organization_id,
-            keypoint_model=keypoint_model,
-            module=module,
-            module_version=module_version,
         )
 
     @staticmethod

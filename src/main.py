@@ -14,9 +14,6 @@ sys.path.insert(0, _ROOT)
 
 from utils.config import (
     ACTION_MODELS,
-    BEHAVIOR_CUES_KEYPOINT_MODEL,
-    BEHAVIOR_CUES_MODULE,
-    BEHAVIOR_CUES_MODULE_VERSION,
     DEFAULT_ACTION_MODEL,
     DEFAULT_CAMERA_ID,
     DEFAULT_INPUT_MODE,
@@ -72,21 +69,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_ORGANIZATION_ID,
         help="organization_id for behavior_cues output.",
-    )
-    parser.add_argument(
-        "--keypoint-model",
-        default=BEHAVIOR_CUES_KEYPOINT_MODEL,
-        help="keypoint_model label in behavior_cues metadata.",
-    )
-    parser.add_argument(
-        "--module-name",
-        default=BEHAVIOR_CUES_MODULE,
-        help="metadata.module for behavior_cues output.",
-    )
-    parser.add_argument(
-        "--module-version",
-        default=BEHAVIOR_CUES_MODULE_VERSION,
-        help="metadata.module_version for behavior_cues output.",
     )
     parser.add_argument("--pose-model", default=None, help="YOLO pose weights (.pt).")
     parser.add_argument("--ctrgcn-weights", default=None, help="CTR-GCN joint weights (.pt).")
@@ -302,9 +284,6 @@ def main() -> None:
         output_format=output_format,
         camera_id=args.camera_id,
         organization_id=args.organization_id,
-        keypoint_model=args.keypoint_model,
-        module=args.module_name,
-        module_version=args.module_version,
     )
 
     if args.input_mode == "keypoints":

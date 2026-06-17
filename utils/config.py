@@ -115,10 +115,6 @@ def output_format_for_input_mode(input_mode: str) -> str:
         return KEYPOINTS_OUTPUT_FORMAT
     raise ValueError(f"unknown input_mode: {input_mode!r}")
 
-# behavior_cues delivery envelope (see utils/behavior_cues.py)
-BEHAVIOR_CUES_MODULE = "action_recognition_pipeline"
-BEHAVIOR_CUES_MODULE_VERSION = "0.1.0"
-BEHAVIOR_CUES_KEYPOINT_MODEL = "yolo11n-pose"
 DEFAULT_CAMERA_ID = 0
 DEFAULT_ORGANIZATION_ID = 0
 

@@ -19,41 +19,19 @@ def event_to_behavior_cue(
     *,
     camera_id: int,
     organization_id: int,
-    fps: float,
-    window_size: int,
-    action_model: str,
-    keypoint_model: str,
-    module: str,
-    module_version: str,
+    source_service: str = "nex_posec3d",
+    pts_timestamp_override: float | None = None,
 ) -> dict[str, Any]:
     """Map one internal pipeline event to a behavior_cues delivery record."""
-    mode = event["mode"]
     timestamp = round(float(event["timestamp"]), 3)
+    pts_ts = pts_timestamp_override if pts_timestamp_override is not None else timestamp
     frame = int(event["frame"])
+    confidence = round(float(event["confidence"]), 4)
 
-    if mode == "pair":
+    if event["mode"] == "pair":
         track_id = int(event["track_a"])
-        detector_signals: dict[str, Any] = {
-            "action_recognition": {
-                "mode": "pair",
-                "track_b": int(event["track_b"]),
-                "ntu_class_id": int(event["ntu_class_id"]),
-                "ntu_label": event["ntu_label"],
-                "action_model": action_model,
-            }
-        }
     else:
         track_id = int(event["track_id"])
-        detector_signals = {
-            "action_recognition": {
-                "mode": "single",
-                "ntu_class_id": int(event["ntu_class_id"]),
-                "ntu_label": event["ntu_label"],
-                "action_model": action_model,
-            }
-        }
-
-    window_seconds = round(window_size / max(float(fps), 1e-6), 3)
 
     return {
         "type": BEHAVIOR_CUES_TYPE,
@@ -62,21 +40,22 @@ def event_to_behavior_cue(
         "organization_id": organization_id,
         "track_id": track_id,
         "timestamp": timestamp,
-        "pts_timestamp": timestamp,
+        "pts_timestamp": pts_ts,
         "frame_id": frame_id(camera_id, frame),
+        "alert_triggered": True,
+        "confidence": confidence,
         "cues": [
             {
                 "code": event["target_class"],
-                "confidence": round(float(event["confidence"]), 4),
+                "confidence": confidence,
             }
         ],
         "context_hints": [],
         "metadata": {
-            "module": module,
-            "module_version": module_version,
-            "window_seconds": window_seconds,
-            "keypoint_model": keypoint_model,
-            "detector_signals": detector_signals,
+            "family": BEHAVIOR_CUES_FAMILY,
+            "source_service": source_service,
+            "detection_timestamp": timestamp,
+            "pts_timestamp": pts_ts,
         },
     }
 
@@ -86,24 +65,14 @@ def events_to_behavior_cues(
     *,
     camera_id: int,
     organization_id: int,
-    fps: float,
-    window_size: int,
-    action_model: str,
-    keypoint_model: str,
-    module: str,
-    module_version: str,
+    source_service: str = "nex_posec3d",
 ) -> list[dict[str, Any]]:
     return [
         event_to_behavior_cue(
             event,
             camera_id=camera_id,
             organization_id=organization_id,
-            fps=fps,
-            window_size=window_size,
-            action_model=action_model,
-            keypoint_model=keypoint_model,
-            module=module,
-            module_version=module_version,
+            source_service=source_service,
         )
         for event in events
     ]
