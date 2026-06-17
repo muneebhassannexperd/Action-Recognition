@@ -7,7 +7,22 @@ from pathlib import Path
 from typing import Any, TextIO
 
 BEHAVIOR_CUES_TYPE = "behavior_cues"
-BEHAVIOR_CUES_FAMILY = "aggressive_interaction"
+DEFAULT_FAMILY = "aggressive_interaction"
+
+# Per-cue family override.  Cues not listed here use DEFAULT_FAMILY.
+# If Kenneth later moves stumble_recover to physical_instability, change here.
+CUE_FAMILY: dict[str, str] = {
+    "push_shove": "aggressive_interaction",
+    "swing_attempt": "aggressive_interaction",
+    "grapple_clinch": "aggressive_interaction",
+    "aggressive_posture": "aggressive_interaction",
+    "stumble_recover": "aggressive_interaction",
+}
+
+
+def family_for_cue(cue_code: str) -> str:
+    """Return the behavior_cues ``family`` for a given cue code."""
+    return CUE_FAMILY.get(cue_code, DEFAULT_FAMILY)
 
 
 def frame_id(camera_id: int, frame: int) -> str:
@@ -27,6 +42,8 @@ def event_to_behavior_cue(
     pts_ts = pts_timestamp_override if pts_timestamp_override is not None else timestamp
     frame = int(event["frame"])
     confidence = round(float(event["confidence"]), 4)
+    cue_code = event["target_class"]
+    family = family_for_cue(cue_code)
 
     if event["mode"] == "pair":
         track_id = int(event["track_a"])
@@ -35,7 +52,7 @@ def event_to_behavior_cue(
 
     return {
         "type": BEHAVIOR_CUES_TYPE,
-        "family": BEHAVIOR_CUES_FAMILY,
+        "family": family,
         "camera_id": camera_id,
         "organization_id": organization_id,
         "track_id": track_id,
@@ -46,13 +63,13 @@ def event_to_behavior_cue(
         "confidence": confidence,
         "cues": [
             {
-                "code": event["target_class"],
+                "code": cue_code,
                 "confidence": confidence,
             }
         ],
         "context_hints": [],
         "metadata": {
-            "family": BEHAVIOR_CUES_FAMILY,
+            "family": family,
             "source_service": source_service,
             "detection_timestamp": timestamp,
             "pts_timestamp": pts_ts,
@@ -97,10 +114,12 @@ def write_behavior_cues_jsonl(
 
 
 __all__ = [
-    "BEHAVIOR_CUES_FAMILY",
     "BEHAVIOR_CUES_TYPE",
+    "CUE_FAMILY",
+    "DEFAULT_FAMILY",
     "event_to_behavior_cue",
     "events_to_behavior_cues",
+    "family_for_cue",
     "frame_id",
     "write_behavior_cues_jsonl",
 ]

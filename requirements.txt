@@ -3,3 +3,4 @@ opencv-python>=4.8
 torch>=2.0
 ultralytics>=8.0
 lapx>=0.5.2  # ByteTrack/BoT-SORT dependency for ultralytics
+redis>=5.0
