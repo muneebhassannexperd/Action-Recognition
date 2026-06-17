@@ -531,6 +531,32 @@ class VideoProcessor:
             report["annotated_video"] = os.path.basename(annotated_output_path)
         return report
 
+    def _write_behavior_cues_jsonl(
+        self,
+        events: list[dict[str, Any]],
+        path: str,
+        *,
+        fps: float,
+        camera_id: int,
+        organization_id: int,
+        keypoint_model: str,
+        module: str,
+        module_version: str,
+    ) -> list[dict[str, Any]]:
+        cue_records = events_to_behavior_cues(
+            events,
+            camera_id=camera_id,
+            organization_id=organization_id,
+            fps=fps,
+            window_size=self.buffer.window_size,
+            action_model=self.action_model,
+            keypoint_model=keypoint_model,
+            module=module,
+            module_version=module_version,
+        )
+        write_behavior_cues_jsonl(path, cue_records)
+        return cue_records
+
     def _write_output(
         self,
         report: dict[str, Any],
@@ -538,6 +564,7 @@ class VideoProcessor:
         output_json_path: str | None,
         *,
         output_format: str,
+        behavior_cues_jsonl_path: str | None = None,
         fps: float,
         camera_id: int,
         organization_id: int,
@@ -545,25 +572,31 @@ class VideoProcessor:
         module: str,
         module_version: str,
     ) -> dict[str, Any]:
-        if output_json_path:
+        cues_path = behavior_cues_jsonl_path
+        if output_format == "behavior_cues" and output_json_path and not cues_path:
+            cues_path = output_json_path
+
+        cue_kwargs = dict(
+            fps=fps,
+            camera_id=camera_id,
+            organization_id=organization_id,
+            keypoint_model=keypoint_model,
+            module=module,
+            module_version=module_version,
+        )
+        if cues_path:
+            os.makedirs(os.path.dirname(cues_path) or ".", exist_ok=True)
+            report["behavior_cues"] = self._write_behavior_cues_jsonl(
+                events, cues_path, **cue_kwargs,
+            )
+
+        if output_json_path and output_format != "behavior_cues":
             os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
-            if output_format == "behavior_cues":
-                cue_records = events_to_behavior_cues(
-                    events,
-                    camera_id=camera_id,
-                    organization_id=organization_id,
-                    fps=fps,
-                    window_size=self.buffer.window_size,
-                    action_model=self.action_model,
-                    keypoint_model=keypoint_model,
-                    module=module,
-                    module_version=module_version,
-                )
-                write_behavior_cues_jsonl(output_json_path, cue_records)
-                report["behavior_cues"] = cue_records
-            else:
-                with open(output_json_path, "w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2)
+            if behavior_cues_jsonl_path:
+                report["behavior_cues_jsonl"] = os.path.basename(behavior_cues_jsonl_path)
+            with open(output_json_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+
         report["output_format"] = output_format
         return report
 
@@ -573,6 +606,7 @@ class VideoProcessor:
         output_json_path: str | None = None,
         annotated_output_path: str | None = None,
         *,
+        behavior_cues_jsonl_path: str | None = None,
         output_format: str = VIDEO_OUTPUT_FORMAT,
         camera_id: int = DEFAULT_CAMERA_ID,
         organization_id: int = DEFAULT_ORGANIZATION_ID,
@@ -663,6 +697,7 @@ class VideoProcessor:
             events,
             output_json_path,
             output_format=output_format,
+            behavior_cues_jsonl_path=behavior_cues_jsonl_path,
             fps=fps,
             camera_id=camera_id,
             organization_id=organization_id,

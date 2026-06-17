@@ -135,7 +135,7 @@ def _draw_label_box(
     color: tuple[int, int, int],
 ) -> None:
     font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.5
+    scale = 1
     thickness = 1
     (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
     pad = 4

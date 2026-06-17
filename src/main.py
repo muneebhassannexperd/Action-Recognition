@@ -250,8 +250,11 @@ def main() -> None:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
     annotated_path = None
-    if args.input_mode == "video" and not args.no_annotated_video:
-        annotated_path = args.annotated_output or str(OUTPUTS_DIR / f"{base}_annotated.mp4")
+    behavior_cues_path = None
+    if args.input_mode == "video":
+        behavior_cues_path = str(OUTPUTS_DIR / f"{base}_cues.jsonl")
+        if not args.no_annotated_video:
+            annotated_path = args.annotated_output or str(OUTPUTS_DIR / f"{base}_annotated.mp4")
 
     event_min_conf = (
         args.event_min_confidence
@@ -316,10 +319,13 @@ def main() -> None:
         report = processor.process(
             args.video,
             annotated_output_path=annotated_path,
+            behavior_cues_jsonl_path=behavior_cues_path,
             **process_kwargs,
         )
     print(f"\nInput mode: {args.input_mode}")
     print(f"Saved output ({output_format}): {output_path}")
+    if behavior_cues_path:
+        print(f"Saved behavior_cues JSONL: {behavior_cues_path}")
     if annotated_path:
         print(f"Saved annotated video: {annotated_path}")
     if output_format == "behavior_cues":
@@ -328,6 +334,8 @@ def main() -> None:
     else:
         event_count = len(report.get("events", []))
         print(f"Target events detected (non-Normal): {event_count}")
+        if behavior_cues_path:
+            print(f"Behavior cues emitted: {len(report.get('behavior_cues', []))}")
     print(f"Pair inference segments: {report.get('pair_inference_segments', 0)}")
     print(f"Single inference segments: {report.get('single_inference_segments', 0)}")
     motion = report.get("motion_gate", {})

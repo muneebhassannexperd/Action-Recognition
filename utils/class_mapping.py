@@ -55,12 +55,12 @@ SINGLE_EXCLUDED_TARGETS = frozenset({
 
 # BGR colors for annotated video overlays
 TARGET_COLORS: dict[str, tuple[int, int, int]] = {
-    "Normal": (160, 160, 160),
-    "push_shove": (0, 80, 255),
-    "swing_attempt": (0, 165, 255),
-    "grapple_clinch": (200, 100, 0),
-    "stumble_recover": (0, 200, 255),
-    "aggressive_posture": (0, 0, 255),
+    "Normal":             (180, 180, 180),  # Light gray
+    "push_shove":         (100, 149, 255),  # Bright cornflower blue
+    "swing_attempt":      (255, 80,  80),   # Bright red
+    "grapple_clinch":     (0, 255,  136),   # Bright amber/yellow
+    "stumble_recover":    ( 80, 255, 180),  # Bright mint green
+    "aggressive_posture": (220,  80, 255),  # Bright purple/violet
 }
 
 TARGET_NTU_IDS = frozenset(CLASS_MAPPING.keys())
