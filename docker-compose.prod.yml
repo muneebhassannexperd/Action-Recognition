@@ -1,0 +1,19 @@
+services:
+  posec3d-cue-service:
+    image: nex/posec3d-cue-service:latest
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - ORGANIZATION_ID=${ORGANIZATION_ID}
+      - CAMERA_ID=${CAMERA_ID}
+      - DEVICE_ID=${DEVICE_ID:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

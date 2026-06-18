@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
 COPY utils/ utils/
+COPY data/ data/
 COPY service/ service/
 COPY scripts/download_models.sh scripts/download_models.sh
 
