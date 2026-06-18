@@ -1,196 +1,233 @@
-# CTR-GCN / PoseC3D Action Recognition Pipeline
+# PoseC3D Action Recognition Service
 
 Inference-only CCTV pipeline for aggressive-interaction cue detection on NTU120 actions, with project-specific class mapping (`push_shove`, `swing_attempt`, `grapple_clinch`, `stumble_recover`, `aggressive_posture`).
 
-## Pipeline overview
+Runs as a **multi-camera Docker service** on edge nodes, consuming pose keypoints from MS-1 via Redis and publishing `behavior_cues` back to Redis.
 
-**Mode 1 — Video (local dev)**
-
-```
-Video → YOLO Pose → ByteTrack → Interaction Detection → Skeleton Buffer
-     → Pair validation → Motion gate → PoseC3D / CTR-GCN
-     → Debug JSON + Annotated MP4
-```
-
-**Mode 2 — Keypoints (Integration)**
+## Architecture
 
 ```
-YOLO keypoints JSONL → Interaction Detection → Skeleton Buffer
-     → Pair validation → Motion gate → PoseC3D / CTR-GCN
-     → behavior_cues JSONL
+MS-1 (YOLO Pose + Tracking)
+        │
+        ▼  Redis Pub/Sub
+┌─────────────────────────────────────────┐
+│  PoseC3D Cue Service (this container)   │
+│                                         │
+│  ┌─ Camera 4 state ──────────────────┐  │
+│  │  InteractionDetector              │  │
+│  │  SkeletonBuffer                   │  │
+│  │  Events / Track state             │  │
+│  └───────────────────────────────────┘  │
+│  ┌─ Camera 5 state ──────────────────┐  │
+│  │  InteractionDetector              │  │
+│  │  SkeletonBuffer                   │  │
+│  │  Events / Track state             │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  ┌─ Shared PoseC3D Model (loaded 1x) ┐  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+        │
+        ▼  Redis Pub/Sub
+MS-11 (Behavior Cues Consumer)
 ```
 
-Runs YOLO + tracking on integration side. This service consumes tracked keypoints and emits format cues.
+**Key design:** One container per edge node (not per camera). The PoseC3D model is loaded once and shared across all assigned cameras. Each camera has fully isolated tracking/buffer state.
 
-## Features
+## Redis Channel Schema
 
-- **Default backend:** PoseC3D NTU120 (`joint.pth`) with **limb** heatmaps (configurable in `utils/config.py`)
-- **Alternate backend:** CTR-GCN NTU120 (`--action-model ctrgcn`)
-- **Pair inference (M=2):** `push_shove`, `swing_attempt`, `grapple_clinch`, `aggressive_posture`
-- **Single inference (M=1):** `stumble_recover` only
-- **Gates:** pair geometry validation, skeleton motion-energy filter
-- **Two CLI modes:** video in → debug outputs; keypoints in →  `behavior_cues` JSONL
+| Direction | Channel |
+|-----------|---------|
+| Subscribe (input) | `org:{ORG}:device:{DEV}:base_detection:*` (wildcard) |
+| Publish (output) | `org:{ORG}:device:{DEV}:behavior_cues:{family}:{camera_id}` |
+| Commands | `device:{DEV}:commands` (`add_camera` / `remove_camera`) |
 
-## Setup
+## Camera Discovery
+
+On startup the service fetches assigned cameras from MS-3:
+
+```
+GET {MS3_URL}/api/edge/devices/{DEVICE_ID}/cameras  →  [4, 5, 9]
+```
+
+At runtime, cameras can be hot-added or removed via the command channel:
+
+```json
+{"action": "add_camera", "camera_id": 7}
+{"action": "remove_camera", "camera_id": 4}
+```
+
+## Quick Start (Docker)
+
+### Build and run locally
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-bash scripts/download_models.sh
+cp .env.example .env
+# Edit .env: set DEVICE=cpu, MS3_URL= (empty), CAMERA_IDS=4,5
+docker compose up --build
 ```
 
-Place a custom YOLO pose weights file at `yolo_models/best.pt` if you have one; otherwise `yolo11l-pose.pt` is used (auto-downloaded by Ultralytics on first run if missing).
-
-## Model weights
-
-Weights are **not** committed to git. After clone, run:
+### Production deployment (edge with GPU)
 
 ```bash
-bash scripts/download_models.sh
+cp .env.example .env
+# Edit .env: set ORGANIZATION_ID, DEVICE_ID, MS3_URL, REDIS_HOST
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-See [pretrained_model/README.md](pretrained_model/README.md) for manual download links.
-
-| Model | Path |
-|-------|------|
-| PoseC3D NTU120 XSub (default) | `pretrained_model/posec3d/joint.pth` |
-| CTR-GCN NTU120 joint | `pretrained_model/CTRGCN_NTU120_CSub_joint_84.9/runs-58-57072.pt` |
-| YOLO pose (video mode only) | `yolo_models/yolo11l-pose.pt` or `yolo_models/best.pt` |
-
-### Defaults (`utils/config.py`)
-
-| Setting | Default |
-|---------|---------|
-| `DEFAULT_ACTION_MODEL` | `posec3d` |
-| `POSEC3D_HEATMAP_MODE` | `limb` |
-| `DEFAULT_WINDOW_SIZE` | `30` frames |
-| `INFERENCE_STRIDE` | `25` (CLI default `--inference-stride` is `15`) |
-| `EVENT_MIN_CONFIDENCE` | `0.12` |
-
-Override on the CLI with `--action-model`, `--posec3d-heatmap`, etc.
-
-## Usage
-
-`--input-mode` fixes both input and output — there is no separate `--output-format` flag.
-
-| Mode | Input | Output |
-|------|-------|--------|
-| `video` (default) | MP4 file | `outputs/<stem>.json` + `outputs/<stem>_annotated.mp4` |
-| `keypoints` | keypoints JSONL | `outputs/<stem>_cues.jsonl` (no video) |
-
-### Mode 1 — Video (local dev / testing)
+### From exported image
 
 ```bash
-python3 src/main.py \
-  --video Test-Videos/Grapple-Clinch/grapple_high_7.mp4 \
-  --device cpu
+docker load -i posec3d-cue-service.tar
+cp .env.example .env
+# Edit .env
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-Defaults to **PoseC3D + limb** heatmaps. Writes:
+## Environment Variables
 
-- `outputs/grapple_high_7.json` — full debug report (`events`, `raw_predictions`, `pair_validation`, `motion_gate`, …)
-- `outputs/grapple_high_7_annotated.mp4` — overlays with mapped cue labels
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ORGANIZATION_ID` | Yes | — | Organization ID for channel routing |
+| `DEVICE_ID` | Yes | — | Edge device ID |
+| `MS3_URL` | Prod | — | MS-3 API base URL for camera discovery |
+| `CAMERA_IDS` | Dev | — | Fallback comma-separated camera IDs (when `MS3_URL` is empty) |
+| `REDIS_HOST` | Yes | `localhost` | Redis hostname |
+| `REDIS_PORT` | No | `6379` | Redis port |
+| `REDIS_PASSWORD` | No | — | Redis password |
+| `DEVICE` | No | `cuda` | `cuda` or `cpu` |
+| `ACTION_MODEL` | No | `posec3d` | `posec3d` or `ctrgcn` |
+| `WINDOW_SIZE` | No | `100` | Skeleton buffer length (frames) |
+| `INFERENCE_STRIDE` | No | `15` | Frames between inferences |
+| `EVENT_MIN_CONFIDENCE` | No | `0.12` | Min confidence to emit a cue |
+| `INTERACTION_DISTANCE` | No | `300.0` | Max pixel distance for pair gating |
+| `INTERACTION_FRAMES` | No | `15` | Consecutive close frames before pair inference |
+| `LOG_LEVEL` | No | `INFO` | Python log level |
 
-Skip the annotated video:
+## Input Schema (`ai_detection`)
 
-```bash
-python3 src/main.py --video path/to/clip.mp4 --no-annotated-video --device cpu
-```
-
-### Mode 2 — Keypoints (Integration End)
-
-```bash
-python3 src/main.py \
-  --input-mode keypoints \
-  --keypoints outputs/grapple_high_7_keypoints.jsonl \
-  --device cpu
-```
-
-Writes `outputs/grapple_high_7_cues.jsonl` — one `behavior_cues` JSON object per line:
-
-- `type`: `"behavior_cues"`
-- `family`: `"aggressive_interaction"`
-- `cues[].code`: `push_shove`, `swing_attempt`, `grapple_clinch`, `stumble_recover`, or `aggressive_posture`
-
-Optional delivery metadata: `--camera-id`, `--organization-id`, `--keypoint-model`, `--module-name`, `--module-version`.
-
-#### Simulate  keypoints (from a test video)
-
-```bash
-python3 scripts/export_keypoints.py \
-  --video Test-Videos/Grapple-Clinch/grapple_high_7.mp4 \
-  --device cpu
-# → outputs/grapple_high_7_keypoints.jsonl
-
-python3 src/main.py \
-  --input-mode keypoints \
-  --keypoints outputs/grapple_high_7_keypoints.jsonl \
-  --device cpu
-# → outputs/grapple_high_7_cues.jsonl
-```
-
-### Keypoints input schema (JSONL)
-
-One JSON object per line (`.jsonl`). Also accepts a JSON array or `{"frames": [...]}`.
+Messages published by MS-1 on the subscribe channel:
 
 ```json
 {
-  "frame": 265,
-  "timestamp": 8.83,
-  "fps": 30.0,
-  "width": 1920,
-  "height": 1080,
-  "tracks": [
+  "type": "ai_detection",
+  "camera_id": 4,
+  "organization_id": 1,
+  "frame_sequence": 1042,
+  "pts_timestamp": 34.733,
+  "frame_shape": [1080, 1920, 3],
+  "persons": [
     {
-      "track_id": 1,
-      "bbox": [x1, y1, x2, y2],
-      "confidence": 0.92,
-      "keypoints": [[x, y, conf], ...]
+      "track_id": 7,
+      "bounding_box": [x1, y1, x2, y2],
+      "confidence": 0.91,
+      "pose_keypoints": [[x, y, conf], ...]
     }
   ]
 }
 ```
 
-**Requirements**
+- `pose_keypoints`: 17 COCO joints in YOLO order
+- `frame_shape`: `[height, width, channels]`
 
-- `track_id` — stable across frames (tracking)
-- `bbox` — `[x1, y1, x2, y2]` in pixels
-- `keypoints` — **17 COCO joints, YOLO order** (see `src/joint_mapper.py`)
-- `fps` / `width` / `height` — on each line or at least the first frame
+## Output Schema (`behavior_cues`)
 
-## CLI reference
+Published to `org:{ORG}:device:{DEV}:behavior_cues:{family}:{camera_id}`:
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--input-mode` | `video` | `video` → debug JSON + annotated MP4; `keypoints` → behavior_cues JSONL |
-| `--video` | — | Input video (required for `video` mode) |
-| `--keypoints` | — | Input keypoints JSONL (required for `keypoints` mode) |
-| `--action-model` | `posec3d` | `posec3d` or `ctrgcn` |
-| `--posec3d-heatmap` | `limb` | `limb` (official `joint.pth`) or `keypoint` (COCO-17 joints) |
-| `--window-size` | `30` | Skeleton buffer frames: 30, 48, 60, 90, 100, 120 |
-| `--inference-stride` | `15` | Run action model every N frames once buffer is full |
-| `--interaction-distance` | `250` | Max pixel distance between bbox centers for pair gating |
-| `--interaction-frames` | `30` | Consecutive close frames before pair inference |
-| `--event-min-confidence` | `0.12` | Min confidence for events / overlays |
-| `--motion-gate` / `--no-motion-gate` | on | Skip inference when skeleton motion is below threshold |
-| `--motion-threshold-pair` | `0.020` | Pair motion-energy floor |
-| `--motion-threshold-single` | `0.012` | Single-track motion-energy floor |
-| `--camera-id` | `0` | `camera_id` in behavior_cues output (keypoints mode) |
-| `--organization-id` | `0` | `organization_id` in behavior_cues output (keypoints mode) |
-| `--tracker` | `bytetrack.yaml` | ByteTrack or BoT-SORT (video mode only) |
-| `--no-annotated-video` | off | Skip annotated MP4 (video mode only) |
-| `--device` | `cuda` | `cuda` or `cpu` |
-| `--output` | auto | Override output path |
-| `--show-mapping` | — | Print COCO-17 → NTU-25 joint mapping and exit |
+```json
+{
+  "type": "behavior_cues",
+  "camera_id": 4,
+  "organization_id": 1,
+  "track_id": 7,
+  "family": "aggressive_interaction",
+  "alert_triggered": true,
+  "confidence": 0.85,
+  "cues": [
+    {
+      "code": "grapple_clinch",
+      "confidence": 0.85
+    }
+  ],
+  "metadata": {
+    "family": "aggressive_interaction",
+    "source_service": "posec3d_cue_service",
+    "detection_timestamp": "2026-06-18T10:37:44.123Z",
+    "pts_timestamp": 34.733
+  }
+}
+```
 
-## Project structure
+## Detection Cues
+
+| Cue | Inference Path | Family |
+|-----|----------------|--------|
+| `push_shove` | pair (M=2) | `aggressive_interaction` |
+| `swing_attempt` | pair (M=2) | `aggressive_interaction` |
+| `grapple_clinch` | pair (M=2) | `aggressive_interaction` |
+| `aggressive_posture` | pair (M=2) | `aggressive_interaction` |
+| `stumble_recover` | single (M=1) | `aggressive_interaction` |
+
+## Pipeline Flow
 
 ```
+ai_detection message
+    │
+    ▼
+redis_adapter.py → ParsedFrame
+    │
+    ▼
+VideoProcessor._process_frame()
+    ├─ InteractionDetector (pair proximity)
+    ├─ SkeletonBuffer (temporal windowing)
+    ├─ PairValidator (geometry checks)
+    ├─ MotionGate (energy filter)
+    ├─ PoseC3D inference (pair M=2 or single M=1)
+    └─ Class mapping (NTU120 → cue codes)
+    │
+    ▼
+behavior_cues.py → JSON
+    │
+    ▼
+Redis publish
+```
+
+## CLI Mode (Offline Testing)
+
+The pipeline also supports offline CLI usage for local development and testing:
+
+### Video mode
+
+```bash
+python src/main.py \
+  --video Test-Videos/Grapple-Clinch/grapple_high_7.mp4 \
+  --device cpu
+```
+
+Outputs: `outputs/<stem>.json` (debug) + `outputs/<stem>_annotated.mp4`
+
+### Keypoints mode
+
+```bash
+python src/main.py \
+  --input-mode keypoints \
+  --keypoints outputs/grapple_high_7_keypoints.jsonl \
+  --device cpu
+```
+
+Outputs: `outputs/<stem>_cues.jsonl`
+
+## Project Structure
+
+```
+service/
+  posec3d_service.py      Multi-camera Redis orchestrator
+  redis_adapter.py        ai_detection message parser
+  __init__.py
 src/
   main.py                 CLI entry point
-  video_processor.py      Pipeline orchestration (video + keypoints paths)
-  keypoints_input.py      keypoints JSONL loader
+  video_processor.py      Pipeline orchestration
+  keypoints_input.py      Keypoints JSONL loader
   pose_detector.py        YOLO pose + tracking (video mode)
   interaction_detector.py Pair proximity gating
   pair_validator.py       Geometric pair validation
@@ -199,29 +236,31 @@ src/
   joint_mapper.py         COCO-17 → NTU-25 mapping (CTR-GCN)
   recognizers/            PoseC3D and CTR-GCN backends
 utils/
-  config.py               Thresholds, model paths, I/O mode defaults
+  config.py               Thresholds, model paths, defaults
   class_mapping.py        NTU120 → project cue codes
-  behavior_cues.py        delivery JSONL serializer
+  behavior_cues.py        behavior_cues JSON serializer
 scripts/
   download_models.sh      Fetch pretrained weights
-  export_keypoints.py     Video → keypoints JSONL ( format simulator)
+  export_keypoints.py     Video → keypoints JSONL simulator
+  test_redis_e2e.py       Multi-camera Redis smoke test
 data/                     NTU120 label file
-pretrained_model/         Checkpoints (gitignored)
+pretrained_model/         Checkpoints (gitignored, downloaded during build)
 yolo_models/              YOLO pose weights (gitignored)
-outputs/                  JSON, JSONL, annotated videos (gitignored)
 ```
 
-## Class mapping
+## Model Weights
 
-NTU120 classes are mapped to project cues in `utils/class_mapping.py`. Unmapped predictions become `Normal` and are suppressed from events / delivery output.
+Weights are downloaded automatically during `docker build`. For local development:
 
-| Cue | Inference path |
-|-----|----------------|
-| `push_shove` | pair (M=2) |
-| `swing_attempt` | pair (M=2) |
-| `grapple_clinch` | pair (M=2) |
-| `aggressive_posture` | pair (M=2) |
-| `stumble_recover` | single (M=1) |
+```bash
+bash scripts/download_models.sh
+```
+
+| Model | Path |
+|-------|------|
+| PoseC3D NTU120 XSub (default) | `pretrained_model/posec3d/joint.pth` |
+| CTR-GCN NTU120 joint | `pretrained_model/CTRGCN_NTU120_CSub_joint_84.9/runs-58-57072.pt` |
+| YOLO pose (video mode only) | `yolo_models/yolo11l-pose.pt` or `yolo_models/best.pt` |
 
 ## License
 
