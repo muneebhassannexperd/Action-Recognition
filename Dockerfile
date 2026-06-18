@@ -26,8 +26,7 @@ RUN if [ "$DOWNLOAD_WEIGHTS" = "true" ]; then \
 ENV PYTHONUNBUFFERED=1
 ENV REDIS_HOST=redis
 ENV REDIS_PORT=6379
-# ORGANIZATION_ID and CAMERA_ID are required at runtime (no defaults).
-# DEVICE_ID is optional (set for edge deployment).
+# Required at runtime: ORGANIZATION_ID, DEVICE_ID, MS3_URL
 ENV DEVICE=cuda
 ENV ACTION_MODEL=posec3d
 ENV LOG_LEVEL=INFO

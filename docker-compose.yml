@@ -22,8 +22,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - ORGANIZATION_ID=${ORGANIZATION_ID:-1}
-      - CAMERA_ID=${CAMERA_ID:-4}
-      - DEVICE_ID=${DEVICE_ID:-}
+      - DEVICE_ID=${DEVICE_ID:-edge-node-01}
     # Uncomment for GPU on edge deployment:
     # deploy:
     #   resources:
